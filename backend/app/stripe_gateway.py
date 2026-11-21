@@ -105,7 +105,7 @@ class PriceInfo:
     recurring: bool  # retrieve_price: recurring at a fixed quantity (licensed), not metered
     currency: str  # lower case, as Stripe sends it
     unit_amount: int | None  # minor units; None for a Price Stripe computes (tiers, custom)
-    interval: str | None  # month, year...; None for a one-off Price
+    interval: str | None  # month, year; None if one-off (or, listed, billed every N > 1)
     product: str
 
 
@@ -149,6 +149,14 @@ class SubscriptionInfo:
     current_period_end: datetime | None
     cancel_at_period_end: bool
     tenant_id: str | None  # metadata.tenant_id as Checkout set it; unchecked
+
+
+def _per(recurring: stripe.Price.Recurring | None) -> str | None:
+    """The interval a plan's price is shown per: month or year only when billed every one. A Price
+    billed every 3 months is shown as its bare amount, never as monthly."""
+    if recurring is None or recurring.interval_count != 1:
+        return None
+    return str(recurring.interval)
 
 
 class Gateway:
@@ -659,7 +667,7 @@ class Gateway:
                     True,
                     price.currency,
                     price.unit_amount,
-                    price.recurring.interval if price.recurring else None,
+                    _per(price.recurring),
                     product if isinstance(product, str) else product.id,
                 )
             return got

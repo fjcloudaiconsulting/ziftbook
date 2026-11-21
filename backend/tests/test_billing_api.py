@@ -573,7 +573,7 @@ def test_prices_come_from_one_listing(monkeypatch: pytest.MonkeyPatch) -> None:
                 "product": "prod_a",
                 "unit_amount": 2500,
                 "currency": "eur",
-                "recurring": {"interval": "month"},
+                "recurring": {"interval": "month", "interval_count": 1},
             }
             for price_id in ("price_1", "price_other")
         ],

@@ -49,6 +49,8 @@ LIVE = {"active", "trialing", "past_due"}
 # The ticket-number advisory lock convention (app/schedule.py): one business's events take turns,
 # so two new subscriptions cannot both find no row.
 LOCK_KEY = 79
+# How many times reconcile writes a subscription that keeps changing before the job retries.
+RECONCILE_TRIES = 3
 
 # A double click within one window gets the same Checkout Session (Stripe's idempotency key).
 CHECKOUT_WINDOW_SECONDS = 300
@@ -285,25 +287,20 @@ def reconcile(job: Job) -> None:
     if not isinstance(sub_id, str):
         return
     found = stripe_gateway.gateway.retrieve_subscription(sub_id)
-    tenant_id = _business(found)
-    kept = None
-    if tenant_id is not None:
-        with tenant_context(tenant_id) as db:
-            if not db.scalar(TENANT, {"t": tenant_id}):
-                tenant_id = None
-            else:
-                db.execute(LOCK, {"key": LOCK_KEY})
-                current = db.execute(CURRENT).first()
-                if (
-                    current is not None
-                    and current.stripe_subscription_id != found.id
-                    and current.status in LIVE
-                ):
-                    # The business already pays: a live newcomer is a duplicate, an ended one old.
-                    if found.status in LIVE:
-                        kept = current.stripe_subscription_id
-                else:
-                    _write(db, tenant_id, found)
+    # Stripe is read outside the lock (no transaction stays open across a Stripe call), so two
+    # jobs for one subscription can write in the other order than they read. Whoever writes last
+    # reads Stripe again after its commit and writes again until the row matches: an older
+    # snapshot never outlives a newer one.
+    for _ in range(RECONCILE_TRIES):
+        tenant_id, kept, wrote = _apply(found)
+        if not wrote:
+            break
+        again = stripe_gateway.gateway.retrieve_subscription(sub_id)
+        if again == found:
+            break
+        found = again
+    else:
+        raise RuntimeError("subscription kept changing during reconcile")
     if tenant_id is None:
         logger.error("billing subscription names no business", extra={"subscription": found.id})
     elif kept is not None:
@@ -321,6 +318,33 @@ def reconcile(job: Job) -> None:
                 "billing duplicate subscription cancelled",
                 extra={"subscription": found.id, "kept": kept},
             )
+
+
+def _apply(found: stripe_gateway.SubscriptionInfo) -> tuple[UUID | None, str | None, bool]:
+    """One locked look at the business's row: its tenant (None if it names none), the kept
+    subscription when this one is a duplicate, and whether the row was written."""
+    tenant_id = _business(found)
+    if tenant_id is None:
+        return None, None, False
+    with tenant_context(tenant_id) as db:
+        if not db.scalar(TENANT, {"t": tenant_id}):
+            return None, None, False
+        db.execute(LOCK, {"key": LOCK_KEY})
+        current = db.execute(CURRENT).first()
+        if (
+            current is not None
+            and current.stripe_subscription_id != found.id
+            and current.status not in ENDED
+        ):
+            # The business already has one Stripe still bills or settles. A live newcomer next to
+            # a live one is a duplicate; any other newcomer that isn't live is an older one (its
+            # event late) and leaves the row alone; a live one replaces an unpaid or paused row.
+            if found.status in LIVE and current.status in LIVE:
+                return tenant_id, current.stripe_subscription_id, False
+            if found.status not in LIVE:
+                return tenant_id, None, False
+        _write(db, tenant_id, found)
+    return tenant_id, None, True
 
 
 def _write(db: Session, tenant_id: UUID, found: stripe_gateway.SubscriptionInfo) -> None:

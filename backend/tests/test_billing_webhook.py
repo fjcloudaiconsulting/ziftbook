@@ -546,6 +546,84 @@ def test_a_new_subscription_replaces_an_ended_one(
     assert stripe.count("cancel_subscription") == 0
 
 
+# ZIF-79 fence. Kills: a stale Stripe read written after a newer one (two jobs for one
+# subscription, the older snapshot committing last), leaving a cancelled business on its plan.
+def test_a_stale_read_never_outlives_a_newer_one(
+    client: TestClient,
+    people: People,
+    stripe: FakeGateway,
+    plan: Plan,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sub = stripe.add_subscription(people.a, price_of(migrate_engine, plan({}, price=True)))
+    read = stripe.retrieve_subscription
+
+    def stale_then_cancelled(sub_id: str) -> SubscriptionInfo:
+        found = read(sub_id)
+        stripe.subscriptions[sub_id]["status"] = "canceled"  # cancelled right after this read
+        return found
+
+    monkeypatch.setattr(stripe, "retrieve_subscription", stale_then_cancelled)
+    post(client, sub_event(sub, "customer.subscription.created"))
+    run_jobs()
+
+    assert row_of(people.a).status == "canceled"
+    assert source(people.a) != "subscription"
+
+
+# ZIF-79 fence. Kills: an older subscription's late event replacing the business's current one
+# while Stripe still bills or settles it (unpaid, paused, incomplete), which lets a second
+# Checkout through.
+@pytest.mark.parametrize("current", ["unpaid", "paused", "incomplete"])
+def test_an_old_subscriptions_late_event_leaves_the_current_one(
+    current: str,
+    client: TestClient,
+    people: People,
+    stripe: FakeGateway,
+    plan: Plan,
+    migrate_engine: Engine,
+) -> None:
+    price = price_of(migrate_engine, plan({}, price=True))
+    old = stripe.add_subscription(people.a, price, status="canceled")
+    new = stripe.add_subscription(people.a, price, status=current)
+    post(client, sub_event(new, "customer.subscription.created"))
+    run_jobs()
+
+    post(client, sub_event(old, "customer.subscription.deleted"))
+    run_jobs()
+
+    assert (row_of(people.a).stripe_subscription_id, row_of(people.a).status) == (new, current)
+
+
+# ZIF-79 fence. Kills: a Price billed every 3 months listed as monthly (interval_count dropped).
+def test_listed_prices_name_an_interval_only_when_billed_every_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZIF_STRIPE_SECRET_KEY", "sk_test_not_a_real_key")
+
+    def price(id_: str, interval: str, count: int) -> dict[str, Any]:
+        return {
+            "id": id_,
+            "object": "price",
+            "active": True,
+            "currency": "eur",
+            "unit_amount": 900,
+            "product": "prod_1",
+            "recurring": {"interval": interval, "interval_count": count},
+        }
+
+    listing = {
+        "object": "list",
+        "url": "/v1/prices",
+        "has_more": False,
+        "data": [price("price_m", "month", 1), price("price_q", "month", 3)],
+    }
+    found = Gateway(http_client=Replies(listing)).list_prices(["price_m", "price_q"])
+
+    assert (found["price_m"].interval, found["price_q"].interval) == ("month", None)
+
+
 # ZIF-79 fence. Kills: the billing webhook left under the browser's 64 KiB cap (a silent 413 until
 # Stripe disables the endpoint).
 def test_the_billing_webhook_takes_256_kib(
