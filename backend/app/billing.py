@@ -311,18 +311,25 @@ async def webhook(request: Request) -> JSONResponse:
 
 def rearm() -> int:
     """A new reconcile for each subscription whose event's job gave up (GAVE_UP), once an hour on
-    the worker's timer: a Stripe outage longer than a job's retries still lands. Returns how
-    many."""
+    the worker's timer: a Stripe outage longer than a job's retries still lands. Returns how many
+    it queued."""
     hour = datetime.now(UTC).strftime("%Y-%m-%dT%H")
     with SessionLocal.begin() as session:
         subs = session.scalars(GAVE_UP, {"retry_for": RETRY_FOR}).all()
-        for sub in subs:
-            # Keyed by the hour: a timer retried after a failure queues no second job.
-            key = f"billing.event:rearm:{sub}:{hour}"
-            jobs.enqueue(session, "billing.event", key, {"subscription_id": sub})
-    if subs:
-        logger.warning("billing events re-armed", extra={"subscriptions": len(subs)})
-    return len(subs)
+        # Keyed by the hour: at most one each an hour, and a timer retried after a failure (or a
+        # re-armed job that gave up within the hour) queues nothing more.
+        queued = sum(
+            jobs.enqueue(
+                session,
+                "billing.event",
+                f"billing.event:rearm:{sub}:{hour}",
+                {"subscription_id": sub},
+            )
+            for sub in subs
+        )
+    if queued:
+        logger.warning("billing events re-armed", extra={"subscriptions": queued})
+    return queued
 
 
 def _business(found: stripe_gateway.SubscriptionInfo) -> UUID | None:

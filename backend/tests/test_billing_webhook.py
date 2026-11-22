@@ -39,6 +39,10 @@ def stripe(fake_stripe: FakeGateway, monkeypatch: pytest.MonkeyPatch) -> FakeGat
 @pytest.fixture(autouse=True)
 def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
     yield
+    # jobs is not tenant-scoped: a job a test left failing (or re-armed) would come due in a later
+    # test that runs every kind, and fail there.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM jobs WHERE kind = 'billing.event'"))
     # A plan change mails the owner (ZIF-78 enforcement). As the migrate role: the app role has no
     # DELETE on email_outbox (ZB-10).
     for tenant_id in (people.a, people.b):
@@ -604,6 +608,9 @@ def test_two_interleaved_jobs_end_on_the_newer_state(
     assert row_of(people.a).status == "canceled"
 
 
+REARMED = "billing.event:rearm:%"
+
+
 # ZIF-79 fence. Kills: an acknowledged event lost to a Stripe outage longer than its job's retries
 # (a purchase never granted, a cancellation never applied); a re-arm for an event older than
 # Stripe's own retries, while one is still trying, or once a later job got through; a re-armed
@@ -624,6 +631,21 @@ def test_an_event_whose_job_gave_up_is_re_armed_for_three_days(
         with jobs_as_the_worker():
             return billing.rearm()
 
+    def rearmed() -> list[str]:
+        with migrate_engine.connect() as conn:
+            return list(
+                conn.scalars(
+                    text("SELECT payload->>'subscription_id' FROM jobs WHERE dedupe_key LIKE :k"),
+                    {"k": REARMED},
+                )
+            )
+
+    def an_hour_passes() -> None:  # the re-armed jobs' keys name an earlier hour
+        sql(
+            "UPDATE jobs SET dedupe_key = dedupe_key || '-earlier' WHERE dedupe_key LIKE :k",
+            k=REARMED,
+        )
+
     gave_up = "UPDATE jobs SET attempts = 5 WHERE kind = 'billing.event' AND "
     aged = "UPDATE jobs SET due_at = now() - :age WHERE payload->>'event_id' IS NOT NULL AND "
     by_sub = "payload->>'subscription_id' = :s"
@@ -632,13 +654,19 @@ def test_an_event_whose_job_gave_up_is_re_armed_for_three_days(
     sql(aged + by_sub, age=billing.RETRY_FOR + timedelta(hours=1), s=stale)
 
     assert (rearm(), rearm()) == (1, 0)  # the second while the re-armed job still tries
+    assert rearmed() == [lost]
     sql(gave_up + by_sub, s=lost)
-    assert rearm() == 1  # a re-armed job that gave up: again, within the event's three days
+    assert (rearm(), rearmed()) == (0, [lost])  # gave up within the hour: the next hour's turn
+    an_hour_passes()
+    assert (rearm(), rearmed()) == (1, [lost, lost])  # the next hour, within the event's 3 days
+    sql(gave_up + by_sub, s=lost)
+    an_hour_passes()
     sql(aged + by_sub, age=billing.RETRY_FOR + timedelta(hours=1), s=lost)
-    assert rearm() == 0  # past them, the re-armed job's own giving up re-arms nothing
+    # Past them, a re-armed job's giving up re-arms nothing.
+    assert (rearm(), len(rearmed())) == (0, 2)
 
     sql(aged + by_sub, age=timedelta(hours=1), s=lost)  # back within them
-    sql("UPDATE jobs SET attempts = 0 WHERE dedupe_key LIKE :k", k=f"billing.event:rearm:{lost}:%")
+    sql("UPDATE jobs SET attempts = 0 WHERE dedupe_key LIKE :k", k=REARMED)
     run_jobs()  # Stripe is back
 
     assert (row_of(people.a).stripe_subscription_id, row_of(people.b)) == (lost, None)
