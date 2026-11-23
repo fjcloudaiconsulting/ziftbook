@@ -75,7 +75,9 @@ def test_owner_sets_their_password_admin_stays_separate(
         assert members == [(owner, "owner", details["name"])]
         assert db.scalar(text("SELECT currency FROM tenants WHERE id = :t"), {"t": tenant}) == "EUR"
         assert db.scalar(text("SELECT trial_ends_at IS NOT NULL FROM tenant_billing")) is True
-        settings = {key: value for key, value in db.execute(text("SELECT key, value FROM settings"))}
+        settings = {
+            key: value for key, value in db.execute(text("SELECT key, value FROM settings"))
+        }
         assert settings["timezone"] == "Europe/Amsterdam"
         assert settings["language"] == "nl"
     assert platform_events(migrate_engine, "business_created", tenant_id=tenant) == [
