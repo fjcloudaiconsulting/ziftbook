@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import { Link, useRouter } from "@/i18n/navigation";
 
@@ -23,6 +23,7 @@ export function Businesses() {
   const router = useRouter();
   const searchId = useId();
   const [creating, setCreating] = useState(false);
+  const createButton = useRef<HTMLButtonElement>(null);
   const [typed, setTyped] = useState("");
   const [query, setQuery] = useState({ q: "", page: 1 });
   // The answer with the query it answers: rows and page number always belong together, and a failed
@@ -55,13 +56,16 @@ export function Businesses() {
   const failure = shown && !answer && !needsSignIn(shown.outcome.status) ? form(problem(shown.outcome)) : null;
   const pages = answer ? pageCount(answer.total, answer.page_size) : 1;
 
-  if (creating) return <NewBusiness onCancel={() => setCreating(false)} />;
+  if (creating) return <NewBusiness onCancel={() => {
+    setCreating(false);
+    requestAnimationFrame(() => createButton.current?.focus());
+  }} />;
 
   return (
     <Screen wide>
       <BackLink href="/admin">{t("homeTitle")}</BackLink>
       <Heading>{t("businessesTitle")}</Heading>
-      <button className={`${styles.button} ${styles.primary}`} type="button" onClick={() => setCreating(true)}>
+      <button ref={createButton} className={`${styles.button} ${styles.primary}`} type="button" onClick={() => setCreating(true)}>
         {t("createBusiness.title")}
       </button>
       <form role="search" className={styles.field} onSubmit={search}>

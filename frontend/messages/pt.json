@@ -386,7 +386,7 @@
       "ownerName": "Nome do proprietário",
       "exists": "Este endereço já tem uma conta. Use um novo endereço de e-mail para o proprietário.",
       "done": "Negócio criado",
-      "sent": "O e-mail para o proprietário definir a senha está na fila de envio. O link expira 15 minutos após o envio. Se expirar, o proprietário pode usar “Esqueci a senha” na página de login. O negócio usa as configurações habituais de plano e período de teste.",
+      "sent": "O e-mail para o proprietário definir a senha está na fila de envio. O link expira 15 minutos após o envio. Se expirar, o proprietário pode usar “Esqueceu a senha?” na página de login. O negócio usa as configurações habituais de plano e período de teste.",
       "view": "Ver negócio"
     }
   },

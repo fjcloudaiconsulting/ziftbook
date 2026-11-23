@@ -72,7 +72,7 @@ export function NewBusiness({ onCancel }: { onCancel(): void }) {
   return (
     <Screen>
       <button className={styles.textButton} type="button" onClick={onCancel}>{t("businessesTitle")}</button>
-      <Heading>{t("createBusiness.title")}</Heading>
+      <Heading focus>{t("createBusiness.title")}</Heading>
       <p className={styles.lede}>{t("createBusiness.lede")}</p>
       {recheck.banners}
       {message && <Banner tone="error">{message}</Banner>}
