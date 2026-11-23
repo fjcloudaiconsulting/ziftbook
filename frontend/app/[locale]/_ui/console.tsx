@@ -20,7 +20,7 @@ import {
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { bannerFor } from "@/lib/billing";
+import { bannerFor, hasFeature } from "@/lib/billing";
 import { allowed, canAnswerRequests, dateLocale, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { forgetPick, type Locale, pickedHere, resolveLocale } from "@/lib/locale";
 import { badgeText } from "@/lib/today";
@@ -277,17 +277,28 @@ function PlanBanner({ entitlements, owner, timeZone, locale }: { entitlements: E
   );
 }
 
-/** A 402 plan_limit, anywhere: which feature the plan lacks, and where an owner fixes that. */
-function PlanLimitNote({ feature, owner }: { feature: string; owner: boolean }) {
+/** A feature's availability beside its controls, including while the plan read is unresolved. */
+export function FeatureNote({ feature }: { feature: string }) {
+  const { entitlements, session } = useConsole();
   const t = useTranslations("Console.planLimit");
-  // A page's own tab (?tab=) is a new place: the note belongs to the one it came up on.
+  if (!entitlements) return <Banner tone="note">{t("unavailable")}</Banner>;
+  if (hasFeature(entitlements, feature)) return null;
+  return <PlanLimitNote feature={feature} owner={session.role === "owner"} />;
+}
+
+/** A 402 belongs to the tab on which it happened. Inline feature notes stay with their controls. */
+function PlanLimitAlert({ feature, owner }: { feature: string; owner: boolean }) {
   const query = useSearchParams().toString();
   const [cameUpOn] = useState(query);
+  return query === cameUpOn ? <PlanLimitNote feature={feature} owner={owner} /> : null;
+}
+
+function PlanLimitNote({ feature, owner }: { feature: string; owner: boolean }) {
+  const t = useTranslations("Console.planLimit");
   const features = useTranslations("Console.features");
-  // The API names any feature key (a new one may predate its copy): unknown keys read "this feature".
+  // Unknown feature keys still have a readable explanation.
   const key = feature as "other";
   const name = features.has(key) ? features(key) : features("other");
-  if (query !== cameUpOn) return null;
   return (
     <Banner tone="note">
       {t(owner ? "owner" : "worker", { feature: name })}
@@ -630,7 +641,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const nav = navFor(session.role as Role);
   const current = sectionOf(pathname);
   // The badge counts requests for this person to answer: none for a worker who can't (ZIF-143).
-  const badge = canAnswerRequests(session.role as Role, settings.workers_answer_requests) ? pendingCount : null;
+  const badge = canAnswerRequests(session.role as Role, settings.workers_answer_requests, entitlements) ? pendingCount : null;
 
   return (
     <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, entitlements, reloadEntitlements, footerSlot }}>
@@ -674,7 +685,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className={styles.col}>
               {planLimit && (
                 <Suspense key={planLimit.n} fallback={null}>
-                  <PlanLimitNote feature={planLimit.feature} owner={session.role === "owner"} />
+                  <PlanLimitAlert feature={planLimit.feature} owner={session.role === "owner"} />
                 </Suspense>
               )}
               {children}

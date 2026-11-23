@@ -3,6 +3,7 @@
 // `BusinessSettings` (tests/settings.test.mjs reads backend/openapi.json to catch drift).
 
 import { COUNTRIES } from "./account.ts";
+import { type FeatureAccess, hasFeature } from "./billing.ts";
 
 export type Settings = {
   timezone: string;
@@ -25,6 +26,12 @@ export type Settings = {
 };
 export type Key = keyof Settings;
 export type Draft = Record<Key, string | boolean>;
+
+export function settingAvailable(key: Key, entitlements: FeatureAccess): boolean {
+  if (key === "payment_check") return hasFeature(entitlements, "online_payments");
+  if (key === "workers_edit_own_hours" || key === "workers_answer_requests") return hasFeature(entitlements, "worker_permissions");
+  return true;
+}
 
 /** int: a number input (whole, bounded); select: a numeric select; text: a string; bool: a checkbox;
  * email: one address or none (an empty box is null). */

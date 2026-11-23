@@ -55,7 +55,7 @@ export function BookingDetail({
   /** False right after a booking was made or moved: the calendar puts focus on the booking's grid item instead. */
   focusOnOpen?: boolean;
 }) {
-  const { session, settings, call, setPendingCount } = useConsole();
+  const { session, settings, call, setPendingCount, entitlements } = useConsole();
   const t = useTranslations("Console.calendar");
   const today = useTranslations("Console.today");
   const person = useTranslations("Console.person");
@@ -66,7 +66,7 @@ export function BookingDetail({
   const locale = useLocale();
   const tz = settings.timezone;
   const role = session.role === "owner" ? "owner" : "worker";
-  const canAnswer = canAnswerRequests(role, settings.workers_answer_requests);
+  const canAnswer = canAnswerRequests(role, settings.workers_answer_requests, entitlements);
 
   const [detail, setDetail] = useState<BookingDetailOut | null>(null);
   const [load, setLoad] = useState<Load | null>(null);
@@ -288,7 +288,7 @@ export function BookingDetail({
   );
 
   function actions(d: BookingDetailOut) {
-    const list = actionsFor(d, role, now, settings.workers_answer_requests);
+    const list = actionsFor(d, role, now, settings.workers_answer_requests, entitlements);
     // ZIF-143: where Accept and Decline sit, a worker who can't answer reads who does.
     if (d.status === "pending" && !d.expired && !canAnswer) {
       return (

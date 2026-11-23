@@ -138,7 +138,7 @@ function Steps() {
 }
 
 export function Today() {
-  const { session, settings, call, setPendingCount } = useConsole();
+  const { session, settings, call, setPendingCount, entitlements } = useConsole();
   const t = useTranslations("Console.today");
   const calendarT = useTranslations("Console.calendar");
   const nav = useTranslations("Console.nav");
@@ -150,7 +150,7 @@ export function Today() {
   const tz = settings.timezone;
   const isOwner = session.role === "owner";
   // Off (ZIF-143): the queue is read only, a Waiting chip where Accept and Decline sit.
-  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests);
+  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests, entitlements);
 
   // "Now" is read once per render pass, and never ticks: the "now" line and the expiry days only
   // move when something reloads, which is enough for a screen people leave open for minutes.

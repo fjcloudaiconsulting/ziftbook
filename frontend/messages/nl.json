@@ -1200,6 +1200,7 @@
       "other": "deze functie"
     },
     "planLimit": {
+      "unavailable": "De plangegevens zijn niet beschikbaar. Laad de pagina opnieuw om het nog eens te proberen.",
       "owner": "{feature} zit niet in je abonnement.",
       "worker": "{feature} zit niet in je abonnement. Vraag het aan de eigenaar van het bedrijf.",
       "link": "Kies een abonnement"

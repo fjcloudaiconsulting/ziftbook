@@ -1,3 +1,4 @@
+import { hasFeature } from "../lib/billing.ts";
 // ZIF-79: the console's plan and billing helpers.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
@@ -187,4 +188,11 @@ describe("isStripeUrl", () => {
     for (const url of ["javascript:alert(1)", "data:text/html,x", "http://checkout.stripe.com/x", "https://evil.example", "https://checkout.stripe.com.evil.example/x", "not a url", ""])
       assert.equal(isStripeUrl(url), false, url);
   });
+});
+
+
+test("only a true entitlement flag enables a feature (ZIF-298)", () => {
+  for (const value of [false, 0, 1, undefined]) assert.equal(hasFeature({ values: { online_payments: value } }, "online_payments"), false);
+  assert.equal(hasFeature(null, "online_payments"), false);
+  assert.equal(hasFeature({ values: { online_payments: true } }, "online_payments"), true);
 });

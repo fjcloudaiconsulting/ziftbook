@@ -3,6 +3,13 @@ import type { EntitlementsOut, PlanOption } from "@/api-client";
 
 import { formatMoney } from "./money.ts";
 
+export type FeatureAccess = Pick<EntitlementsOut, "values"> | null;
+
+/** Unknown plan details never enable a gated control. Counts are not feature flags. */
+export function hasFeature(entitlements: FeatureAccess, feature: string): boolean {
+  return entitlements?.values[feature] === true;
+}
+
 /** Whole days until `until`, rounded up, never negative. */
 export function daysLeft(until: string, now: Date): number {
   return Math.max(0, Math.ceil((new Date(until).getTime() - now.getTime()) / 86_400_000));

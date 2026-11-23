@@ -22,6 +22,7 @@ import {
   refusedKeys,
   saveRefusal,
   settingsBody,
+  settingAvailable,
   slotExamples,
   SLOT_STEPS,
   zoneOptions,
@@ -502,5 +503,34 @@ describe("ZIF-99 the message a refused address shows", () => {
         "Use letras sem acento, como nome@seunegocio.com.br.",
       ],
     );
+  });
+});
+
+
+describe("plan-gated settings (ZIF-298)", () => {
+  const gated = ["payment_check", "workers_edit_own_hours", "workers_answer_requests"];
+  test("unknown or missing flags never enable gated settings; ordinary settings stay editable", () => {
+    for (const entitlements of [null, { values: {} }, { values: { online_payments: false, worker_permissions: false } }]) {
+      for (const { key } of FIELDS) assert.equal(settingAvailable(key, entitlements), !gated.includes(key), key);
+    }
+  });
+  test("each setting follows its own flag", () => {
+    for (const online_payments of [false, true]) {
+      for (const worker_permissions of [false, true]) {
+        const entitlements = { values: { online_payments, worker_permissions } };
+        assert.equal(settingAvailable("payment_check", entitlements), online_payments);
+        assert.equal(settingAvailable("workers_edit_own_hours", entitlements), worker_permissions);
+        assert.equal(settingAvailable("workers_answer_requests", entitlements), worker_permissions);
+      }
+    }
+  });
+  test("a downgraded plan preserves stored preferences when unrelated settings are saved", () => {
+    const stored = { ...saved, payment_check: true, workers_edit_own_hours: true, workers_answer_requests: true };
+    const draft = { ...draftFrom(stored), booking_horizon_days: "90" };
+    for (const key of gated) {
+      assert.equal(settingAvailable(key, { values: {} }), false);
+      assert.equal(draft[key], true);
+    }
+    assert.deepEqual(settingsBody(stored, draft), { body: { booking_horizon_days: 90 }, invalid: [] });
   });
 });

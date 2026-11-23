@@ -17,12 +17,12 @@ import uiStyles from "../_ui/ui.module.css";
  * lede, so switching tabs never makes the header jump. While the blocked-time tab is showing its
  * own form, this header hides so the form's own heading is the only `<h1>` on screen. */
 export function MyHours({ tab }: { tab: "hours" | "timeOff" }) {
-  const { session, settings, updateSession } = useConsole();
+  const { session, settings, updateSession, entitlements } = useConsole();
   const t = useTranslations("Console.hours");
   const nav = useTranslations("Console.nav");
   const person = useTranslations("Console.person");
   const city = zoneCity(settings.timezone);
-  const editable = canEditHours(session.role as Role, true, settings.workers_edit_own_hours);
+  const editable = canEditHours(session.role as Role, true, settings.workers_edit_own_hours, entitlements);
   const [inForm, setInForm] = useState(false);
   const name = session.display_name || person("nameNotSet");
 

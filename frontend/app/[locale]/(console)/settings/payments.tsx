@@ -4,11 +4,12 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type PaymentAccountOut, paymentsAccount, paymentsConnect } from "@/api-client";
+import { hasFeature } from "@/lib/billing";
 import { currencyName } from "@/lib/currency";
 import { formatMoney } from "@/lib/money";
 import { connectError, paymentsAction, percentOf, stripePricingUrl, withoutStripe } from "@/lib/settings";
 
-import { SignedOutBanner, useConsole } from "../../_ui/console";
+import { FeatureNote, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { Banner } from "../../_ui/parts";
 import { openStripeDashboard } from "../../_ui/stripe-dashboard";
@@ -17,7 +18,7 @@ import uiStyles from "../../_ui/ui.module.css";
 /** Online payments: the Stripe connection's state, and the one action it allows (owners only). `switchRow`
  * is the settings form's own checkbox that turns the checkout's payment step on (it saves with the page). */
 export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow(min: string, ready: boolean): ReactNode }) {
-  const { session, call } = useConsole();
+  const { session, call, entitlements } = useConsole();
   const t = useTranslations("Console.settings");
   const locale = useLocale() as "en" | "nl" | "pt";
   const [account, setAccount] = useState<PaymentAccountOut | null>(null);
@@ -27,6 +28,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   const [signedOut, setSignedOut] = useState(false);
   const busyRef = useRef(false);
   const owner = session.role === "owner";
+  const available = hasFeature(entitlements, "online_payments");
 
   // Stripe sends the owner back with ?stripe=return (read the state again) or ?stripe=refresh (the
   // link expired: fetch a fresh one); either way the param goes once handled. Read at mount, before the
@@ -63,7 +65,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   }
 
   async function go() {
-    if (busyRef.current) return;
+    if (busyRef.current || !available) return;
     busyRef.current = true;
     setBusy(true);
     setFailed(false);
@@ -106,6 +108,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       </legend>
       <p className={styles.sectionDesc}>{t("paymentsDesc")}</p>
       <div className={styles.sectionBody}>
+      <FeatureNote feature="online_payments" />
       {/* The section is a tab of its own (ZIF-161): say it is loading rather than show an empty tab. */}
       {!account && !failed && (
         <p className={uiStyles.hint} role="status">
@@ -130,7 +133,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
         </>
       )}
       {(action === "connect" || action === "continue") && (
-        <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go()}>
+        <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" disabled={!available} aria-disabled={busy || undefined} onClick={() => go()}>
           {busy && <span className={uiStyles.spinner} aria-hidden="true" />}
           {t(action === "connect" ? "paymentsConnect" : "paymentsContinue")}
         </button>
