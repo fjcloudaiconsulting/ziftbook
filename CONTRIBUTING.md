@@ -823,6 +823,18 @@ request's session), never a plan's name or slug.
   billing setting) goes through a `SECURITY DEFINER` function with its audit row; Stripe's state and the people
   limit's mark go through the worker (`billing.enforce`, `app/enforcement.py`). Never grant the app role a write on
   them: a business could give itself a plan.
+- **Billing (ZIF-79, `backend/app/billing.py`):** an owner subscribes through Stripe Checkout and manages the
+  subscription in Stripe's customer portal, both on the platform account. These routes store nothing: Checkout
+  creates the Stripe customer and the billing webhook stores it. `billing.sync_portal()` makes the portal offer
+  exactly the public, unarchived plans with a Price; it updates the account's default portal configuration, which
+  must have been saved once in Stripe's dashboard (in test mode too). Only active recurring Prices count: a plan
+  whose Price is archived in Stripe shows no price and drops out of the portal. An admin's plan save or archive
+  calls it once the write has committed; Stripe refusing or not set up never fails the write, which answers
+  `portal_synced: false` and the plans screen says so (saving again retries). A plan option carries its offer's
+  coupon discount (`percent_off`, `amount_off`) and terms (`coupon_duration`, `coupon_duration_in_months`), read
+  from Stripe and kept in process like the Prices; `coupon_valid` is false once Stripe says the coupon is deleted,
+  expired or used up, and None while Stripe can't be asked. Checkout answers 409 `coupon_unavailable` for a dead
+  coupon and sends an unknown one along (Stripe decides).
 
 ## Money
 
@@ -1258,6 +1270,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_STRIPE_SECRET_KEY` | api, worker | `""` | for payments | yes | Stripe secret key (`sk_...`), for the platform account that owns the Connect accounts. The worker needs only this one (events, and later releases and refunds). Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
 | `ZIF_STRIPE_WEBHOOK_SECRET` | api | `""` | for payments | yes | Signing secret (`whsec_...`) of the Connect webhook endpoint `/api/stripe/webhook`. Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
 | `ZIF_STRIPE_PUBLISHABLE_KEY` | api | `""` | for payments | no | Stripe publishable key (`pk_...`), public by design: the booking page needs it to render the card form. Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
+| `ZIF_STRIPE_BILLING_WEBHOOK_SECRET` | api | `""` | for billing | yes | Signing secret (`whsec_...`) of the platform billing webhook endpoint `/api/stripe/billing-webhook` (ZIF-79: subscription events), never the Connect one's: an event signed with the other is refused. Unset (or `ZIF_STRIPE_SECRET_KEY` unset): that endpoint answers 503 `billing_unavailable` and Stripe retries. |
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | yes, or `ZIF_TURNSTILE_DISABLED` | yes | Cloudflare Turnstile secret, checked on public bookings, sign-up and password-reset requests, and on a sign-in, invite acceptance or admin sign-in once repeated wrong passwords ask for a challenge (429 `challenge_required`). Unset: every booking, sign-up and reset request is refused (403 `turnstile_failed`), no challenge can be passed, and the API logs an ERROR at startup, unless `ZIF_TURNSTILE_DISABLED=true`. |
 | `ZIF_TURNSTILE_DISABLED` | api | `false` | no | no | `true` skips the Turnstile check when no secret is set (development, CI, tests): bookings, sign-up and reset requests need no token, and a sign-in challenge accepts any token. Ignored when a secret is set. Never on a public deployment: the API logs an ERROR at startup when `ZIF_APP_URL` is not localhost. |

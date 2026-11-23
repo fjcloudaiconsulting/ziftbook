@@ -7,12 +7,15 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 import stripe
 from opentelemetry.trace import SpanKind
+from pydantic import SecretStr
 from stripe import RequestOptions
 from stripe.params import PaymentIntentCreateParams, RefundCreateParams
+from stripe.params.billing_portal import ConfigurationUpdateParamsFeatures
+from stripe.params.checkout import SessionCreateParams
 from stripe.params.v2.core import AccountCreateParams
 
 from app import tracing
@@ -95,13 +98,15 @@ class RefundState:
 
 @dataclass(frozen=True)
 class PriceInfo:
-    """A Price on the platform account, as the plan editor checks it."""
+    """A Price on the platform account: the plan editor checks it (ZIF-78), the billing page shows
+    it and the portal lists it by product (ZIF-79)."""
 
     active: bool
     recurring: bool  # retrieve_price: recurring at a fixed quantity (licensed), not metered
-    currency: str
-    unit_amount: int | None
-    interval: str | None  # month, year...; None for a one-off Price
+    currency: str  # lower case, as Stripe sends it
+    unit_amount: int | None  # minor units; None for a Price Stripe computes (tiers, custom)
+    interval: str | None  # month, year; None if one-off (or, listed, billed every N > 1)
+    product: str
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,36 @@ class Event:
     type: str
     account: str | None
     object_id: str | None
+
+
+@dataclass(frozen=True)
+class BillingEvent:
+    """A platform event (ZIF-79): only the subscription it is about, which reconcile re-reads."""
+
+    id: str
+    type: str
+    subscription_id: str | None
+
+
+@dataclass(frozen=True)
+class SubscriptionInfo:
+    """What Stripe says about a platform subscription now (ZIF-79)."""
+
+    id: str
+    customer: str
+    status: str
+    price_id: str | None  # its one item's Price; None if it has no item
+    current_period_end: datetime | None
+    cancel_at_period_end: bool
+    tenant_id: str | None  # metadata.tenant_id as Checkout set it; unchecked
+
+
+def _per(recurring: stripe.Price.Recurring | None) -> str | None:
+    """The interval a plan's price is shown per: month or year only when billed every one. A Price
+    billed every 3 months is shown as its bare amount, never as monthly."""
+    if recurring is None or recurring.interval_count != 1:
+        return None
+    return str(recurring.interval)
 
 
 class Gateway:
@@ -456,6 +491,7 @@ class Gateway:
         def call(client: stripe.StripeClient) -> PriceInfo:
             got = client.v1.prices.retrieve(price_id)
             recurring = got.recurring
+            product = got.product
             return PriceInfo(
                 got.active,
                 # Metered is billed on reported usage, which Checkout's quantity of 1 never sells.
@@ -463,6 +499,7 @@ class Gateway:
                 got.currency,
                 got.unit_amount,
                 recurring.interval if recurring is not None else None,
+                product if isinstance(product, str) else product.id,
             )
 
         return self._call("retrieve_price", call)
@@ -485,17 +522,15 @@ class Gateway:
 
     def construct_event(self, body: bytes, header: str | None) -> Event:
         """The event, once Stripe's signature over these exact bytes checks out."""
-        secret = StripeSettings().stripe_webhook_secret.get_secret_value()
+        event = _verified(body, header, StripeSettings().stripe_webhook_secret)
         try:
-            stripe.WebhookSignature.verify_header(body, header, secret, TOLERANCE_SECONDS)
-            event = json.loads(body)
             made = Event(
                 id=event["id"],
                 type=event["type"],
                 account=event.get("account"),
                 object_id=event["data"]["object"].get("id"),
             )
-        except stripe.SignatureVerificationError, ValueError, KeyError, TypeError, AttributeError:
+        except KeyError, TypeError, AttributeError:
             raise BadSignature from None
         # Signed, but the fields must still be what the handlers assume.
         if not (
@@ -506,6 +541,219 @@ class Gateway:
         ):
             raise BadSignature
         return made
+
+    # ZIF-79: the platform's own billing, on the platform account (no stripe_account option).
+
+    def construct_billing_event(self, body: bytes, header: str | None) -> BillingEvent:
+        """A platform event, signed with the billing endpoint's own secret (never the Connect
+        one's), and the subscription it names: a Checkout Session's or a failed invoice's
+        subscription, or the subscription itself."""
+        event = _verified(body, header, StripeSettings().stripe_billing_webhook_secret)
+        try:
+            found = event["data"]["object"]
+            if event["type"] == "checkout.session.completed":
+                sub = found.get("subscription")
+            elif event["type"].startswith("invoice."):
+                # Since API 2025-03-31 the invoice names it under parent; older versions on top.
+                parent = found.get("parent") or {}
+                sub = (parent.get("subscription_details") or {}).get("subscription")
+                sub = sub or found.get("subscription")
+            else:
+                sub = found.get("id")
+            made = BillingEvent(id=event["id"], type=event["type"], subscription_id=sub)
+        except KeyError, TypeError, AttributeError:
+            raise BadSignature from None
+        if not (
+            isinstance(made.id, str)
+            and isinstance(made.type, str)
+            and isinstance(made.subscription_id, str | None)
+        ):
+            raise BadSignature
+        return made
+
+    def create_checkout(
+        self,
+        *,
+        customer: str | None,
+        price: str,
+        coupon: str | None,
+        tenant_id: str,
+        trial_end: int | None,
+        success_url: str,
+        cancel_url: str,
+        locale: str,
+        idempotency_key: str,
+    ) -> str:
+        """A Checkout Session subscribing the business to price; its URL. Stripe creates the
+        customer when there is none; the tenant rides on the session and the subscription, so the
+        billing webhook ties both back to the business. The same key gets the same session."""
+
+        def call(client: stripe.StripeClient) -> str:
+            params: SessionCreateParams = {
+                "mode": "subscription",
+                "line_items": [{"price": price, "quantity": 1}],
+                "client_reference_id": tenant_id,
+                "subscription_data": {"metadata": {"tenant_id": tenant_id}},
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "locale": locale,
+            }
+            if customer is not None:
+                params["customer"] = customer
+            if coupon is not None:
+                params["discounts"] = [{"coupon": coupon}]
+            if trial_end is not None:
+                params["subscription_data"]["trial_end"] = trial_end
+            made = client.v1.checkout.sessions.create(params, {"idempotency_key": idempotency_key})
+            if not made.url:
+                raise Failed("invalid", None)
+            return made.url
+
+        return self._call("create_checkout", call)
+
+    def create_portal(self, customer: str, return_url: str, locale: str) -> str:
+        """A customer-portal session for customer; its URL."""
+        return self._call(
+            "create_portal",
+            lambda client: (
+                client.v1.billing_portal.sessions.create(
+                    {"customer": customer, "return_url": return_url, "locale": locale}
+                ).url
+            ),
+        )
+
+    def sync_portal_configuration(self, prices: dict[str, list[str]]) -> None:
+        """The default portal configuration offers exactly these Prices, by product, with
+        cancellation at period end, card updates and invoices. Failed("invalid") when the account
+        has no default configuration (its portal was never saved in the dashboard)."""
+
+        def call(client: stripe.StripeClient) -> None:
+            found = client.v1.billing_portal.configurations.list(
+                {"is_default": True, "limit": 1}
+            ).data
+            if not found:
+                logger.warning("billing portal has no default configuration")
+                raise Failed("invalid", None)
+            features: ConfigurationUpdateParamsFeatures = {
+                "subscription_update": {"enabled": bool(prices)},
+                "subscription_cancel": {"enabled": True, "mode": "at_period_end"},
+                "payment_method_update": {"enabled": True},
+                "invoice_history": {"enabled": True},
+            }
+            if prices:
+                features["subscription_update"] |= {
+                    "products": [{"product": k, "prices": v} for k, v in prices.items()],
+                    "default_allowed_updates": ["price"],
+                    "proration_behavior": "create_prorations",
+                }
+            client.v1.billing_portal.configurations.update(found[0].id, {"features": features})
+
+        self._call("sync_portal_configuration", call)
+
+    def list_prices(self, ids: list[str]) -> dict[str, PriceInfo]:
+        """The active recurring Prices of these ids; any other is left out. One listing, paged,
+        filtered here: Stripe lists Prices by no id."""
+        wanted = set(ids)
+
+        def call(client: stripe.StripeClient) -> dict[str, PriceInfo]:
+            got = {}
+            listed = client.v1.prices.list({"active": True, "type": "recurring", "limit": 100})
+            for price in listed.auto_paging_iter():
+                if price.id not in wanted:
+                    continue
+                product = price.product
+                got[price.id] = PriceInfo(
+                    True,  # the listing asks for active, recurring Prices only
+                    True,
+                    price.currency,
+                    price.unit_amount,
+                    _per(price.recurring),
+                    product if isinstance(product, str) else product.id,
+                )
+            return got
+
+        return self._call("list_prices", call)
+
+    def retrieve_subscription(self, sub_id: str) -> SubscriptionInfo:
+        def call(client: stripe.StripeClient) -> SubscriptionInfo:
+            got = client.v1.subscriptions.retrieve(sub_id)
+            # Checkout makes one item; since API 2025-03-31 the period is the item's.
+            item = got["items"].data[0] if got["items"].data else None
+            customer = got.customer
+            return SubscriptionInfo(
+                got.id,
+                customer if isinstance(customer, str) else customer.id,
+                got.status,
+                item.price.id if item else None,
+                datetime.fromtimestamp(item.current_period_end, UTC) if item else None,
+                bool(got.cancel_at_period_end),
+                got.metadata["tenant_id"] if "tenant_id" in got.metadata else None,
+            )
+
+        return self._call("retrieve_subscription", call)
+
+    def cancel_subscription(self, sub_id: str, *, prorate: bool) -> None:
+        """End the subscription now (not at period end)."""
+        self._call(
+            "cancel_subscription",
+            lambda client: client.v1.subscriptions.cancel(sub_id, {"prorate": prorate}),
+        )
+
+    def refund_latest_invoice(self, sub_id: str) -> None:
+        """Send back every paid payment of the subscription's latest invoice in full; nothing when
+        none was paid (a trial). Keyed per payment, so a retry refunds nothing twice; a payment
+        already refunded in full (by an earlier run past the key's 24 hours, or by hand) is done."""
+
+        def call(client: stripe.StripeClient) -> None:
+            invoice = client.v1.subscriptions.retrieve(sub_id).latest_invoice
+            if invoice is None:
+                return
+            invoice_id = invoice if isinstance(invoice, str) else invoice.id
+            paid = client.v1.invoice_payments.list({"invoice": invoice_id, "status": "paid"})
+            for each in paid.auto_paging_iter():
+                made = each.payment
+                # Only the field its type names is there: a charge-backed payment has no
+                # payment_intent at all, and reading it would raise.
+                target: str | stripe.PaymentIntent | stripe.Charge | None
+                if made.type == "payment_intent":
+                    target = made.payment_intent
+                elif made.type == "charge":
+                    target = made.charge
+                else:
+                    continue
+                if target is None:
+                    continue
+                target_id = target if isinstance(target, str) else target.id
+                params: RefundCreateParams = (
+                    {"payment_intent": target_id}
+                    if made.type == "payment_intent"
+                    else {"charge": target_id}
+                )
+                try:
+                    client.v1.refunds.create(
+                        params, {"idempotency_key": f"billing-refund:{target_id}"}
+                    )
+                except stripe.InvalidRequestError as error:
+                    if getattr(error, "code", None) != "charge_already_refunded":
+                        raise
+
+        self._call("refund_latest_invoice", call)
+
+
+def _verified(body: bytes, header: str | None, secret: SecretStr) -> dict[str, Any]:
+    """The JSON object Stripe signed, once the signature over these exact bytes checks out with
+    secret. An unset secret verifies nothing."""
+    key = secret.get_secret_value()
+    try:
+        if not key:
+            raise ValueError
+        stripe.WebhookSignature.verify_header(body, header, key, TOLERANCE_SECONDS)
+        event = json.loads(body)
+    except stripe.SignatureVerificationError, ValueError:
+        raise BadSignature from None
+    if not isinstance(event, dict):
+        raise BadSignature
+    return event
 
 
 def _processing_fee(charge: stripe.Charge) -> int | None:

@@ -415,6 +415,7 @@ def test_get_entitlements_shape_and_no_store(
         "members_used",
         "grace_ends_at",
         "offers",
+        "subscription_status",
     }
     assert (body["source"], body["members_used"], body["values"]["places"]) == ("grant", 3, 1)
     assert body["values"]["online_payments"] is False
@@ -428,6 +429,15 @@ def test_get_entitlements_shape_and_no_store(
             "platform_fee_direct": 150,
             "platform_fee_marketplace": 900,
             "coupon_id": None,
+            # ZIF-79: Stripe is not set up here; the plans still answer, without prices.
+            "unit_amount": None,
+            "currency": None,
+            "interval": None,
+            "percent_off": None,
+            "amount_off": None,
+            "coupon_duration": None,
+            "coupon_duration_in_months": None,
+            "coupon_valid": None,
         },
         str(offered): {
             "id": str(offered),
@@ -436,6 +446,14 @@ def test_get_entitlements_shape_and_no_store(
             "platform_fee_direct": 0,
             "platform_fee_marketplace": 0,
             "coupon_id": "SPRING",
+            "unit_amount": None,
+            "currency": None,
+            "interval": None,
+            "percent_off": None,
+            "amount_off": None,
+            "coupon_duration": None,
+            "coupon_duration_in_months": None,
+            "coupon_valid": None,
         },
     }
     assert len([o for o in body["offers"] if o["id"] == str(public)]) == 1

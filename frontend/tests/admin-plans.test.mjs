@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { formatPercent, formFromValues, valuesFromForm } from "../lib/admin-plans.ts";
+import { formatPercent, formFromValues, portalSynced, valuesFromForm } from "../lib/admin-plans.ts";
 
 const registry = [
   { key: "places", kind: "count", default: 1, description: "" },
@@ -39,5 +39,16 @@ describe("formatPercent", () => {
     assert.equal(formatPercent(0, "nl"), "0%");
     assert.equal(formatPercent(1250, "en"), "12.5%");
     assert.equal(formatPercent(1250, "nl"), "12,5%");
+  });
+});
+
+describe("portalSynced", () => {
+  // ZIF-79 fence. Kills: a plan saved while Stripe's portal kept the old plan list, passing unseen by the admin; the
+  // warning shown after a settings write, whose answer says nothing about the portal.
+  test("only an answer saying portal_synced false warns", () => {
+    assert.equal(portalSynced({ id: "p", portal_synced: false }), false);
+    assert.equal(portalSynced({ id: "p", portal_synced: true }), true);
+    assert.equal(portalSynced({ default_plan_id: "p" }), true);
+    assert.equal(portalSynced(undefined), true);
   });
 });

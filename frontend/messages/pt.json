@@ -291,6 +291,7 @@
       "save": "Guardar plano",
       "saved": "Plano guardado.",
       "archived": "Plano arquivado.",
+      "portalNotSynced": "O portal de cobrança do Stripe não foi atualizado, então os proprietários ainda podem ver a lista antiga de planos lá. Salve um plano de novo para tentar outra vez.",
       "archiveTitle": "Arquivar {name}",
       "archiveBody": "Os negócios que o têm mantêm-no. Deixa de poder ser escolhido ou oferecido. Os planos padrão e de teste não podem ser arquivados.",
       "language": {

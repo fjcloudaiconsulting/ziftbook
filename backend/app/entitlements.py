@@ -8,17 +8,20 @@ ended once an operator has set the trial plan, else the default plan (Free). Its
 the registry's defaults, and the business's live overrides over both.
 """
 
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
-from app.auth import CurrentSession
+from app import auth, stripe_gateway
+from app.db import tenant_context
 from app.errors import ApiError, Error
 
 Kind = Literal["flag", "count", "percent"]
@@ -193,7 +196,10 @@ router = APIRouter(prefix="/api", tags=["billing"])
 
 
 class PlanOption(BaseModel):
-    """A plan this business can subscribe to (prices come from Stripe, read elsewhere)."""
+    """A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;
+    all three price fields are None while Stripe can't be asked. The coupon fields are None while
+    Stripe can't be asked and with no coupon; its discount and terms also once it no longer
+    applies (coupon_valid false)."""
 
     id: UUID
     slug: str
@@ -201,6 +207,14 @@ class PlanOption(BaseModel):
     platform_fee_direct: int  # basis points
     platform_fee_marketplace: int  # basis points
     coupon_id: str | None  # the business's offer carries a Stripe coupon
+    unit_amount: int | None  # minor units of currency
+    currency: str | None  # lower case, as Stripe has it
+    interval: str | None  # month, year
+    percent_off: float | None  # the coupon's, as Stripe has it (12.5 is 12.5%)
+    amount_off: int | None  # the coupon's, in minor units of the price's currency
+    coupon_duration: Literal["once", "repeating", "forever"] | None  # invoices it discounts
+    coupon_duration_in_months: int | None  # a repeating coupon's
+    coupon_valid: bool | None  # false: deleted, expired or used up; None: unknown
 
 
 class EntitlementsOut(BaseModel):
@@ -217,22 +231,100 @@ class EntitlementsOut(BaseModel):
     members_used: int  # live members plus pending invites, against places
     grace_ends_at: datetime | None  # when members beyond the places stop signing in
     offers: list[PlanOption]  # owners only; empty for a worker
+    # Owners only: the Stripe subscription's status, live or not (unpaid and paused give no plan
+    # but still have a portal; canceled and incomplete_expired may subscribe again). None: none.
+    subscription_status: str | None
 
 
 # Public, unarchived paid plans and the plans offered to this business (plan_offers is under
 # row-level security), one row each, an offer's coupon included.
 OFFERS = text("""
-SELECT p.id, p.slug, p.name, p.values, o.stripe_coupon_id
+SELECT p.id, p.slug, p.name, p.values, p.stripe_price_id, o.stripe_coupon_id
 FROM plans p LEFT JOIN plan_offers o ON o.plan_id = p.id
 WHERE p.archived_at IS NULL AND p.stripe_price_id IS NOT NULL AND (p.public OR o.id IS NOT NULL)
 ORDER BY p.created_at, p.id
 """)
 
 
-def offers(db: Session) -> list[PlanOption]:
+def offers(db: Session) -> list[Row[Any]]:
+    """The plans on offer, read in the tenant transaction; plan_options() prices them after it."""
+    return list(db.execute(OFFERS))
+
+
+# Stripe's Prices by id, with when to ask again: in process, so a console load rarely asks Stripe.
+# A Price's amount never changes; a failure is kept a short while, so an outage neither hammers
+# Stripe nor hides prices long.
+PRICE_TTL, FAILED_TTL = 1800.0, 60.0
+_prices: dict[str, tuple[float, stripe_gateway.PriceInfo | None]] = {}
+# One refresh at a time; meanwhile other requests answer from what is kept (nothing when cold).
+_refreshing = threading.Lock()
+
+
+def prices(ids: list[str]) -> dict[str, stripe_gateway.PriceInfo]:
+    """The Prices of these ids Stripe has, from the cache or Stripe. Never raises: a Price Stripe
+    can't give is missing from the answer. Call it with no transaction open."""
+    now = time.monotonic()
+    stale = [i for i in ids if _prices.get(i, (0.0, None))[0] <= now]
+    if stale and _refreshing.acquire(blocking=False):
+        try:
+            got = stripe_gateway.gateway.list_prices(stale)
+        except stripe_gateway.Failed:  # what was known stays, asked again a minute on
+            _prices.update({i: (now + FAILED_TTL, _prices.get(i, (0.0, None))[1]) for i in stale})
+        else:
+            _prices.update({i: (now + PRICE_TTL, got.get(i)) for i in stale})
+        finally:
+            _refreshing.release()
+    kept = {i: _prices.get(i, (0.0, None))[1] for i in ids}
+    return {i: info for i, info in kept.items() if info is not None}
+
+
+# Stripe's coupons by id, kept as the Prices are: a coupon's discount never changes, and Stripe
+# reads coupons one at a time. A deleted one is kept as an invalid coupon, as long as a found one.
+DELETED = stripe_gateway.CouponInfo(False, None, None, "once", None, None)
+_coupons: dict[str, tuple[float, stripe_gateway.CouponInfo | None]] = {}
+_refreshing_coupons = threading.Lock()
+
+
+def coupons(ids: list[str]) -> dict[str, stripe_gateway.CouponInfo]:
+    """The coupons of these ids Stripe knows, from the cache or Stripe; one no longer applying (or
+    deleted) has valid false. Never raises: a coupon Stripe can't give right now is missing from
+    the answer. Call it with no transaction open."""
+    now = time.monotonic()
+    stale = [i for i in dict.fromkeys(ids) if _coupons.get(i, (0.0, None))[0] <= now]
+    if stale and _refreshing_coupons.acquire(blocking=False):
+        try:
+            for coupon_id in stale:
+                try:
+                    got = stripe_gateway.gateway.retrieve_coupon(coupon_id)
+                except stripe_gateway.Failed as failure:
+                    if failure.kind == "invalid":  # deleted
+                        _coupons[coupon_id] = (now + PRICE_TTL, DELETED)
+                    else:  # what was known stays, asked again a minute on
+                        known = _coupons.get(coupon_id, (0.0, None))[1]
+                        _coupons[coupon_id] = (now + FAILED_TTL, known)
+                else:
+                    _coupons[coupon_id] = (now + PRICE_TTL, got)
+        finally:
+            _refreshing_coupons.release()
+    kept = {i: _coupons.get(i, (0.0, None))[1] for i in ids}
+    return {i: info for i, info in kept.items() if info is not None}
+
+
+def plan_options(rows: list[Row[Any]]) -> list[PlanOption]:
+    known = prices([row.stripe_price_id for row in rows])
+    known_coupons = coupons([row.stripe_coupon_id for row in rows if row.stripe_coupon_id])
     options = []
-    for row in db.execute(OFFERS):
+    for row in rows:
         values = {key: f.default for key, f in FEATURES.items()} | _stored(row.values)
+        price = known.get(row.stripe_price_id)
+        found = known_coupons.get(row.stripe_coupon_id) if row.stripe_coupon_id else None
+        coupon = found if found and found.valid else None
+        # An amount off counts only in the price's currency: Checkout refuses it on another.
+        same_currency = (
+            coupon is not None
+            and price is not None
+            and (coupon.currency or "").lower() == price.currency.lower()
+        )
         options.append(
             PlanOption(
                 id=row.id,
@@ -241,22 +333,43 @@ def offers(db: Session) -> list[PlanOption]:
                 platform_fee_direct=int(values["platform_fee_direct"]),
                 platform_fee_marketplace=int(values["platform_fee_marketplace"]),
                 coupon_id=row.stripe_coupon_id,
+                unit_amount=price.unit_amount if price else None,
+                currency=price.currency if price else None,
+                interval=price.interval if price else None,
+                percent_off=coupon.percent_off if coupon else None,
+                amount_off=coupon.amount_off if coupon and same_currency else None,
+                coupon_duration=coupon.duration if coupon else None,
+                coupon_duration_in_months=coupon.duration_in_months if coupon else None,
+                coupon_valid=found.valid if found else None,
             )
         )
     return options
 
 
+SUBSCRIPTION_STATUS = text("SELECT status FROM subscriptions")
+
+
 @router.get(
     "/entitlements", name="read_entitlements", responses={s: {"model": Error} for s in (401, 403)}
 )
-def read_entitlements(current: CurrentSession, response: Response) -> EntitlementsOut:
+def read_entitlements(
+    row: Annotated[Row[Any], Depends(auth.resolve)], response: Response
+) -> EntitlementsOut:
     """The business's plan, where it comes from, every feature's value, and the places in use."""
     response.headers["Cache-Control"] = "no-store"
-    found = entitlements(current.db)
+    # The session read here, not in a CurrentSession: the prices may call Stripe, and no
+    # transaction (so no pool connection) is held across a Stripe call.
+    with tenant_context(row.tenant_id) as db:
+        auth.named(auth.SignedIn(row.user_id, row.tenant_id, row.role, db))
+        found = entitlements(db)
+        used = db.scalar(PLACES_USED)
+        rows = offers(db) if row.role == "owner" else []
+        status = db.scalar(SUBSCRIPTION_STATUS) if row.role == "owner" else None
     since = found.over_limit_since
     return EntitlementsOut(
         **asdict(found),
-        members_used=current.db.scalar(PLACES_USED),
+        members_used=used,
         grace_ends_at=since + GRACE if since is not None else None,
-        offers=offers(current.db) if current.role == "owner" else [],
+        offers=plan_options(rows),
+        subscription_status=status,
     )

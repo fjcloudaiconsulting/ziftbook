@@ -34,6 +34,7 @@ from app import (
     audit,
     auth,
     availability,
+    billing,
     booking_links,
     booking_page,
     bookings,
@@ -80,7 +81,8 @@ WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 # The largest legitimate bodies are NoteChange (clients.py, ~48.0 KB worst case, astral characters
 # escaped by json.dumps) and ServiceIn (~47.6 KB); a browser sends raw UTF-8 (~21 KB worst).
 MAX_BODY = 64 * 1024
-# ZIF-158: Stripe's events dwarf anything a browser sends. The webhook alone gets this cap.
+# ZIF-158: Stripe's events dwarf anything a browser sends. The webhooks alone get this cap (ZIF-79:
+# the platform billing one too).
 WEBHOOK_MAX_BODY = 256 * 1024
 # ZIF-99. Body fields whose refusal has its own 422 code, per route (method, path template), so the
 # console can mark the one field the API refused. Every other refusal is invalid_request.
@@ -166,8 +168,11 @@ async def _database_ok() -> bool:
 access_logger = logging.getLogger("app.access")
 
 
+WEBHOOK_PATHS = {payments.WEBHOOK_PATH, billing.WEBHOOK_PATH}
+
+
 def body_cap(path: str) -> int:
-    return WEBHOOK_MAX_BODY if path == payments.WEBHOOK_PATH else MAX_BODY
+    return WEBHOOK_MAX_BODY if path in WEBHOOK_PATHS else MAX_BODY
 
 
 class PathBodyLimit:
@@ -179,7 +184,7 @@ class PathBodyLimit:
         self.webhook = RequestBodyLimitMiddleware(app, max_body_size=WEBHOOK_MAX_BODY)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        webhook = scope["type"] == "http" and scope["path"] == payments.WEBHOOK_PATH
+        webhook = scope["type"] == "http" and scope["path"] in WEBHOOK_PATHS
         await (self.webhook if webhook else self.default)(scope, receive, send)
 
 
@@ -444,6 +449,8 @@ def create_app() -> FastAPI:
         csp_reports.router,
         contact_email.router,
         entitlements.router,
+        billing.router,
+        billing.webhook_router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):

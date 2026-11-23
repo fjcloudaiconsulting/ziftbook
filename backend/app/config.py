@@ -180,6 +180,9 @@ class StripeSettings(Settings):
     stripe_secret_key: SecretStr = SecretStr("")
     # The Connect webhook endpoint's signing secret (whsec_...). API only.
     stripe_webhook_secret: SecretStr = SecretStr("")
+    # ZIF-79: the platform billing webhook endpoint's own signing secret (whsec_...), never the
+    # Connect one's. API only; unset, that endpoint answers 503.
+    stripe_billing_webhook_secret: SecretStr = SecretStr("")
     # Public by design (pk_...): served to the booking page in BookingPageOut.payment. API only.
     stripe_publishable_key: str = ""
 

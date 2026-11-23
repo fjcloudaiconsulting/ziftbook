@@ -6,7 +6,8 @@ no transaction open: the values against the registry (entitlements.validate), a 
 with Stripe. Then, in one transaction, its definer function (0106, which re-checks the admin's
 second factor), its audit event with the reason, and billing.enforce for every business whose
 entitlements may have changed: a refusal rolls all of it back. A business's own write and read go
-through admin_auth.business, which records first.
+through admin_auth.business, which records first. A plan write, once committed, brings Stripe's
+customer portal in step (ZIF-79), and answers whether it did.
 """
 
 import json
@@ -29,7 +30,7 @@ from pydantic import (
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import admin, enforcement, stripe_gateway
+from app import admin, billing, enforcement, stripe_gateway
 from app.admin_auth import (
     CurrentAdmin,
     admin_router,
@@ -92,6 +93,12 @@ class PlanOut(BaseModel):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class SavedPlanOut(PlanOut):
+    # False: the plan is saved, but the customer portal may still offer the old plan list (Stripe
+    # not set up or refusing); saving again retries.
+    portal_synced: bool
 
 
 class FeatureOut(BaseModel):
@@ -263,6 +270,18 @@ def plan_out(db: Session, plan_id: UUID) -> PlanOut:
     return PlanOut.model_validate(row, from_attributes=True)
 
 
+def synced(plan: PlanOut) -> SavedPlanOut:
+    """plan, once billing.sync_portal has run: called after the write commits (no transaction is
+    held across Stripe), and never failing it."""
+    try:
+        done = billing.sync_portal()
+    except stripe_gateway.Failed:
+        done = False
+    if not done:
+        logger.warning("billing portal not synced", extra={"plan_id": str(plan.id)})
+    return SavedPlanOut(**plan.model_dump(), portal_synced=done)
+
+
 @admin_router.get("/plans", responses={s: {"model": Error} for s in (401, 403)})
 def list_plans(current: CurrentAdmin) -> PlansOut:
     """Every plan, and the feature registry the editor is built from."""
@@ -279,7 +298,7 @@ def list_plans(current: CurrentAdmin) -> PlansOut:
 
 def save_plan(
     current: CurrentAdmin, request: Request, plan_id: UUID | None, body: PlanIn
-) -> PlanOut:
+) -> SavedPlanOut:
     values = checked(body.values)
     stored = None
     if plan_id is not None:
@@ -326,24 +345,28 @@ def save_plan(
         enforce_where(db, lambda found: found.plan_id == row.id)
         saved = plan_out(db, row.id)
     logger.info("plan saved", extra={"plan_id": str(row.id)})
-    return saved
+    return synced(saved)
 
 
 @admin_write_router.post("/plans", status_code=201, responses=WRITE_ERRORS)
-def create_plan(body: PlanIn, current: CurrentAdmin, request: Request) -> PlanOut:
+def create_plan(body: PlanIn, current: CurrentAdmin, request: Request) -> SavedPlanOut:
     """A new plan. 409 plan_taken when its slug or Price is another plan's."""
     return save_plan(current, request, None, body)
 
 
 @admin_write_router.put("/plans/{plan_id}", responses=WRITE_ERRORS)
-def update_plan(plan_id: UUID, body: PlanIn, current: CurrentAdmin, request: Request) -> PlanOut:
+def update_plan(
+    plan_id: UUID, body: PlanIn, current: CurrentAdmin, request: Request
+) -> SavedPlanOut:
     """Change a plan, archived or not: its values reach every business on it at once. 409
     plan_in_use for a Price moved or cleared once set: make a new plan instead."""
     return save_plan(current, request, plan_id, body)
 
 
 @admin_write_router.post("/plans/{plan_id}/archive", responses=WRITE_ERRORS)
-def archive_plan(plan_id: UUID, body: Reason, current: CurrentAdmin, request: Request) -> PlanOut:
+def archive_plan(
+    plan_id: UUID, body: Reason, current: CurrentAdmin, request: Request
+) -> SavedPlanOut:
     """Stop selling a plan. Businesses on it keep it; 409 plan_is_default for the default or
     trial plan."""
     with SessionLocal.begin() as db:
@@ -365,7 +388,7 @@ def archive_plan(plan_id: UUID, body: Reason, current: CurrentAdmin, request: Re
         enforce_where(db, lambda found: found.plan_id == plan_id)
         archived = plan_out(db, plan_id)
     logger.info("plan archived", extra={"plan_id": str(plan_id)})
-    return archived
+    return synced(archived)
 
 
 @admin_router.get("/billing", responses={s: {"model": Error} for s in (401, 403)})
