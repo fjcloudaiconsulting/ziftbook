@@ -26,7 +26,7 @@ from app.admin_auth import (
     session_hash,
 )
 from app.bookings import PAYMENT_COLUMNS, PaymentFact, payment_fact
-from app.business_settings import BusinessSettings, Locale
+from app.business_settings import BusinessSettings
 from app.countries import COUNTRIES, Country
 from app.db import SessionLocal, join_tenant
 from app.errors import ApiError, Error
@@ -47,7 +47,6 @@ class CreateBusiness(BaseModel):
     country: Country
     name: accounts.DisplayNameText
     email: passwords.Email
-    locale: Locale
 
 
 class CreatedBusiness(BaseModel):
@@ -64,6 +63,7 @@ def create_business(
 ) -> CreatedBusiness:
     if limits.hit({f"admin_create_business:{current.user_id}": 10}, timedelta(hours=1)):
         raise ApiError(429, "rate_limited")
+    defaults = COUNTRIES[body.country]
     with SessionLocal.begin() as session:
         created = session.execute(
             text("""SELECT * FROM admin_create_business(
@@ -71,7 +71,8 @@ def create_business(
             {
                 **body.model_dump(),
                 "hash": session_hash(request),
-                "currency": COUNTRIES[body.country].currency,
+                "currency": defaults.currency,
+                "locale": defaults.language,
             },
         ).one()
         if created.outcome == "stale":
@@ -90,7 +91,7 @@ def create_business(
         )
         token_id = session.scalar(
             text("SELECT start_email_token('password_reset', :email, :locale)"),
-            {"email": body.email, "locale": body.locale},
+            {"email": body.email, "locale": defaults.language},
         )
         enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
     return CreatedBusiness(id=created.tenant_id)

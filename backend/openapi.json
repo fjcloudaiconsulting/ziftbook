@@ -11641,15 +11641,6 @@
           "email": {
             "type": "string",
             "title": "Email"
-          },
-          "locale": {
-            "type": "string",
-            "enum": [
-              "en",
-              "nl",
-              "pt"
-            ],
-            "title": "Locale"
           }
         },
         "additionalProperties": false,
@@ -11658,8 +11649,7 @@
           "business_name",
           "country",
           "name",
-          "email",
-          "locale"
+          "email"
         ],
         "title": "CreateBusiness"
       },

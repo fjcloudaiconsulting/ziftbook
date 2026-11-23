@@ -6,7 +6,6 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { Link } from "@/i18n/navigation";
 import { adminCreateBusiness } from "@/api-client";
 import { byName, type Country, likelyCountry, signUpRequest } from "@/lib/account";
-import type { Locale } from "@/lib/locale";
 
 import { Banner, EmailField, Heading, problem, Screen, send, Submit } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
@@ -16,7 +15,7 @@ export function NewBusiness({ onCancel }: { onCancel(): void }) {
   const t = useTranslations("Admin");
   const signup = useTranslations("CompleteSignUp");
   const form = useTranslations("Form");
-  const locale = useLocale() as Locale;
+  const locale = useLocale();
   const id = useId();
   const emailInput = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -35,7 +34,7 @@ export function NewBusiness({ onCancel }: { onCancel(): void }) {
       setEmailError(undefined);
       const request = signUpRequest(name, businessName, country);
       if ("errors" in request) return { status: 422 };
-      const outcome = await send(adminCreateBusiness({ body: { ...request.body, email: email.trim(), locale } }));
+      const outcome = await send(adminCreateBusiness({ body: { ...request.body, email: email.trim() } }));
       if (outcome.status === 201 && outcome.data) setCreated(outcome.data.id);
       return outcome;
     },

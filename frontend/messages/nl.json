@@ -386,7 +386,7 @@
       "ownerName": "Naam van de eigenaar",
       "exists": "Dit adres heeft al een account. Gebruik een nieuw e-mailadres voor de eigenaar.",
       "done": "Bedrijf aangemaakt",
-      "sent": "Er staat een e-mail klaar waarmee de eigenaar een wachtwoord kan instellen. Het bedrijf gebruikt de gebruikelijke abonnements- en proefinstellingen.",
+      "sent": "Er staat een e-mail klaar waarmee de eigenaar een wachtwoord kan instellen. De link verloopt 15 minuten na verzending. Daarna kan de eigenaar “Wachtwoord vergeten” op de inlogpagina gebruiken. Het bedrijf gebruikt de gebruikelijke abonnements- en proefinstellingen.",
       "view": "Bedrijf bekijken"
     }
   },

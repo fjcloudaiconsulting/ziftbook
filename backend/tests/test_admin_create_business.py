@@ -41,7 +41,6 @@ def body(email: str | None = None) -> dict[str, str]:
         "name": "Ana Silva",
         "business_name": "Test studio",
         "country": "NL",
-        "locale": "pt",
     }
 
 
@@ -53,6 +52,7 @@ def test_owner_sets_their_password_admin_stays_separate(
     businesses: list[dict[str, Any]],
 ) -> None:
     with migrate_engine.begin() as conn:
+        conn.execute(text("UPDATE users SET locale = 'en' WHERE id = :u"), {"u": an_admin})
         conn.execute(
             text("UPDATE platform_billing SET trial_plan_id = default_plan_id, trial_days = 14")
         )
@@ -63,6 +63,7 @@ def test_owner_sets_their_password_admin_stays_separate(
     with migrate_engine.connect() as conn:
         owner = conn.scalar(text("SELECT id FROM users WHERE email = :e"), {"e": details["email"]})
         assert owner != an_admin
+        assert conn.scalar(text("SELECT locale FROM users WHERE id = :u"), {"u": owner}) == "nl"
         assert (
             conn.scalar(
                 text("SELECT count(*) FROM password_credentials WHERE user_id = :u"), {"u": owner}
@@ -103,6 +104,7 @@ def test_owner_sets_their_password_admin_stays_separate(
     )
     assert admin.get("/api/session").status_code == 401
     message = mailed(details["email"])
+    assert '<html lang="nl">' in message["Html"]
     assert complete(outsider, token_in(message)).status_code == 204
     signed = outsider.post(
         "/api/session", json={"email": details["email"], "password": NEW_PASSWORD}
