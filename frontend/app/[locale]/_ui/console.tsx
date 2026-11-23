@@ -1,14 +1,17 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { createContext, type Dispatch, type FormEvent, type ReactNode, type SetStateAction, useContext, useEffect, useId, useRef, useState } from "react";
+import { createContext, type Dispatch, type FormEvent, type ReactNode, type SetStateAction, useContext, useEffect, Suspense, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
   accountGiveName,
   accountSetLocale,
+  billingReadEntitlements,
   bookingApprovalsList,
   type BusinessSettingsOutput,
+  type EntitlementsOut,
   type SessionOut,
   sessionRead,
   sessionSignOut,
@@ -17,7 +20,8 @@ import {
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
+import { bannerFor } from "@/lib/billing";
+import { allowed, canAnswerRequests, dateLocale, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { forgetPick, type Locale, pickedHere, resolveLocale } from "@/lib/locale";
 import { badgeText } from "@/lib/today";
 import { type AppVersion, versionLabel } from "@/lib/version";
@@ -50,6 +54,11 @@ type ConsoleContextValue = {
    * after it loads and after each answer, so the badge follows what the page shows. */
   pendingCount: number | null;
   setPendingCount: Dispatch<SetStateAction<number | null>>;
+  /** The business's plan and what it allows (ZIF-79), read once with the session. `null` until that read
+   * lands, and for good if it failed: no banner, never a failed console. */
+  entitlements: EntitlementsOut | null;
+  /** Reads the plan again (after Checkout, or when a screen knows it changed). A failed read keeps what is shown. */
+  reloadEntitlements(): Promise<void>;
   /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
    * stacks directly on the tab bar as one element with no gap between them - never a sticky offset
    * computed to line up with a separately-stickied tab bar, which a page nested many levels deep
@@ -235,6 +244,63 @@ export function SignedOutBanner() {
   );
 }
 
+/** The trial, downgrade-grace or grant notice above every page (ZIF-79); one at a time, grace first. */
+function PlanBanner({ entitlements, owner, timeZone, locale }: { entitlements: EntitlementsOut; owner: boolean; timeZone: string; locale: string }) {
+  const t = useTranslations("Console.planBanner");
+  const { kind, days } = bannerFor(entitlements, new Date());
+  if (!kind) return null;
+  const button = `${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`;
+  return (
+    <div className={styles.content}>
+      <Banner tone="note">
+        {kind === "grace" ? t(owner ? "grace" : "graceWorker", { days }) : null}
+        {kind === "trial" ? t("trial", { days }) : null}
+        {kind === "granted"
+          ? t("granted", { date: new Intl.DateTimeFormat(dateLocale(locale), { dateStyle: "long", timeZone }).format(new Date(entitlements.grant_ends_at!)) })
+          : null}
+        {owner && kind !== "granted" && (
+          <>
+            {" "}
+            <Link href="/settings?tab=plan" className={kind === "grace" ? button : undefined}>
+              {t("choose")}
+            </Link>
+          </>
+        )}
+        {owner && kind === "grace" && (
+          <>
+            {" "}
+            <Link href="/team">{t("keep")}</Link>
+          </>
+        )}
+      </Banner>
+    </div>
+  );
+}
+
+/** A 402 plan_limit, anywhere: which feature the plan lacks, and where an owner fixes that. */
+function PlanLimitNote({ feature, owner }: { feature: string; owner: boolean }) {
+  const t = useTranslations("Console.planLimit");
+  // A page's own tab (?tab=) is a new place: the note belongs to the one it came up on.
+  const query = useSearchParams().toString();
+  const [cameUpOn] = useState(query);
+  const features = useTranslations("Console.features");
+  // The API names any feature key (a new one may predate its copy): unknown keys read "this feature".
+  const key = feature as "other";
+  const name = features.has(key) ? features(key) : features("other");
+  if (query !== cameUpOn) return null;
+  return (
+    <Banner tone="note">
+      {t(owner ? "owner" : "worker", { feature: name })}
+      {owner && (
+        <>
+          {" "}
+          <Link href="/settings?tab=plan">{t("link")}</Link>
+        </>
+      )}
+    </Banner>
+  );
+}
+
 function VersionLine({ version }: { version: AppVersion | null }) {
   return version && <p className={styles.versionLine}>{`${versionLabel(version)} · ${version.revision}`}</p>;
 }
@@ -381,6 +447,14 @@ export function Shell({ children }: { children: ReactNode }) {
   const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [version, setVersion] = useState<AppVersion | null>(null);
+  const [entitlements, setEntitlements] = useState<EntitlementsOut | null>(null);
+  // The feature a 402 plan_limit named on this page, for the upgrade message; a new page starts clean.
+  const [planLimit, setPlanLimit] = useState<{ feature: string; n: number } | null>(null);
+  const [planLimitPath, setPlanLimitPath] = useState(pathname);
+  if (pathname !== planLimitPath) {
+    setPlanLimitPath(pathname);
+    setPlanLimit(null);
+  }
 
   // Dev-only version line: 404 unless the deployment turns it on; any failure just leaves it out.
   useEffect(() => {
@@ -415,6 +489,9 @@ export function Shell({ children }: { children: ReactNode }) {
           const rows = pending.status === 200 ? pending.data : undefined;
           if (!cancelled && rows) setPendingCount((current) => current ?? rows.length);
         });
+        send(billingReadEntitlements()).then((plan) => {
+          if (!cancelled && plan.status === 200 && plan.data) setEntitlements(plan.data);
+        });
       }
     });
     return () => {
@@ -446,7 +523,22 @@ export function Shell({ children }: { children: ReactNode }) {
     if (language !== locale) router.replace(`${pathname}${window.location.search}`, { locale: language });
   }, [language, locale, pathname, router]);
 
+  async function reloadEntitlements() {
+    const outcome = await send(billingReadEntitlements());
+    if (outcome.status === 200 && outcome.data) setEntitlements(outcome.data);
+  }
+
+  /** Every answer passes here, so a 402 plan_limit gets its upgrade message wherever it comes from. */
   async function call<T>(
+    request: () => Promise<{ data?: T; error?: unknown; response?: Response }>,
+    options?: { write?: boolean },
+  ): Promise<Outcome<T>> {
+    const outcome = await run(request, options);
+    if (outcome.status === 402 && outcome.code === "plan_limit") setPlanLimit((current) => ({ feature: outcome.feature ?? "other", n: (current?.n ?? 0) + 1 }));
+    return outcome;
+  }
+
+  async function run<T>(
     request: () => Promise<{ data?: T; error?: unknown; response?: Response }>,
     options?: { write?: boolean },
   ): Promise<Outcome<T>> {
@@ -541,7 +633,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const badge = canAnswerRequests(session.role as Role, settings.workers_answer_requests) ? pendingCount : null;
 
   return (
-    <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, footerSlot }}>
+    <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, entitlements, reloadEntitlements, footerSlot }}>
       <div className={styles.shell}>
         <header ref={topbarHeight} className={styles.topbar}>
           <span className={styles.brand}>
@@ -568,6 +660,8 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         )}
 
+        {entitlements && <PlanBanner entitlements={entitlements} owner={session.role === "owner"} timeZone={settings.timezone} locale={locale} />}
+
         <div className={styles.body}>
           <nav className={styles.sidebar} aria-label={navT("sections")}>
             {nav.sidebar.map((section) => (
@@ -577,7 +671,14 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
 
           <main id="content" className={styles.content}>
-            <div className={styles.col}>{children}</div>
+            <div className={styles.col}>
+              {planLimit && (
+                <Suspense key={planLimit.n} fallback={null}>
+                  <PlanLimitNote feature={planLimit.feature} owner={session.role === "owner"} />
+                </Suspense>
+              )}
+              {children}
+            </div>
           </main>
         </div>
 

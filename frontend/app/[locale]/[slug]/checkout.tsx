@@ -49,7 +49,7 @@ export function WhoAt({
   banner: { tone: "note" | "error"; text: string } | null;
   zone: string;
   dLocale: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onPick(id: string | null): void;
 }) {
   const named = s2.slot && s2.worker === "any" && s2.service.workers.length > 1 ? freeNamed(s2.service.workers, s2.free) : [];
@@ -109,7 +109,7 @@ export function Picker({
   banner: { tone: "note" | "error"; text: string } | null;
   dLocale: string;
   zone: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onWorker(id: string): void;
   onWeek(delta: number): void;
   onDay(day: string): void;
@@ -222,7 +222,7 @@ export function Terms({
   businessLanguage: Locale;
   /** Further lines (termsLines), each with {biz}. */
   extra: "termsPaymentFee"[];
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
 }) {
   const c = page.cancellation;
   const ownText = ownPolicyText(c.text, locale, businessLanguage);
@@ -298,7 +298,7 @@ export function DoneScreen({
   locale: Locale;
   dLocale: string;
   zone: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onAgain(): void;
 }) {
   // Only these two are a booking; the caller (doneState) never sends another.
@@ -384,7 +384,7 @@ export function ResumeView({
   aside: ReactNode;
   stepRef: Ref<PayHandle>;
   locale: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onChoice(choice: PaymentChoice): void;
   onSend(): void;
   onChange(): void;
@@ -435,7 +435,7 @@ export function ResumeView({
 
 /** The payment is still being processed: a polite live region whose text changes only when the state
  * does, so a poll that finds nothing new announces nothing. */
-export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeof useTranslations> }) {
+export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeof useTranslations<"BookingPage">> }) {
   return (
     <div className={styles.bookingLayout}>
       <div className={styles.flowCol}>

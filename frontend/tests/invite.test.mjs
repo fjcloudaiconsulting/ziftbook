@@ -77,6 +77,11 @@ describe("what an accept answer means", () => {
     for (const [answer, meaning] of cases) assert.equal(acceptOutcome(answer), meaning, JSON.stringify(answer));
   });
 
+  test("ZIF-78 fence: a business with no place left says so", () => {
+    // Kills: a general "something went wrong" for an invite the plan has no room for.
+    assert.equal(acceptOutcome({ status: 402, code: "plan_limit" }), "noRoom");
+  });
+
   test("a dead link is expired whatever else the answer says", () => {
     assert.equal(acceptOutcome({ status: 400, code: "password_too_short" }), "expired");
   });

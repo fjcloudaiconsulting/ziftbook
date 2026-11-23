@@ -24,7 +24,7 @@ export function ServiceRow({
   loc: Locale;
   businessLanguage: Locale;
   locale: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onOpen(service: Service): void;
 }) {
   const name = localized(svc.name, loc, businessLanguage);

@@ -132,10 +132,11 @@ export function isUnchanged(startsAt: string | null, memberId: string | null, bo
   return startsAt !== null && Date.parse(startsAt) === Date.parse(booking.starts_at) && memberId === booking.worker_id;
 }
 
-export type Failure = "signedOut" | "slotTaken" | "memberUnavailable" | "emailTaken" | "phoneInvalid" | "changed" | "ownerOnly" | "problem";
+export type Failure = "signedOut" | "slotTaken" | "memberUnavailable" | "memberPaused" | "emailTaken" | "phoneInvalid" | "changed" | "ownerOnly" | "problem";
 
 /** What a refused submit says. Without an override any slot 409 means "just taken"; with one, the API says
- * whether the time or the person is the trouble, and the person is only named when one was chosen. `problem`
+ * whether the time or the person is the trouble, and the person is only named when one was chosen. A person
+ * whose place is paused (ZIF-78) is said so either way. `problem`
  * is the console's general banner (a 422 never says which field, so never blame one). */
 export function submitFailure(outcome: { status: number; code?: string }, override: boolean, memberName: string | null): Failure {
   if (outcome.status === 401) return "signedOut";
@@ -144,6 +145,7 @@ export function submitFailure(outcome: { status: number; code?: string }, overri
   if (outcome.status !== 409) return "problem";
   if (outcome.code === "email_taken") return "emailTaken";
   if (outcome.code === "invalid_transition") return "changed";
+  if (outcome.code === "member_paused") return "memberPaused";
   if (!override || outcome.code === "slot_taken") return "slotTaken";
   if (outcome.code === "slot_unavailable") return memberName ? "memberUnavailable" : "slotTaken";
   return "problem";

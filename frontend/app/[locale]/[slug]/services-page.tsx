@@ -36,7 +36,7 @@ function ServiceDialog({
   service: Service | null;
   loc: Locale;
   locale: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onClose(): void;
   onBook(service: Service): void;
 }) {
