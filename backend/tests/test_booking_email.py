@@ -1395,6 +1395,37 @@ def test_only_deposit_emails_show_the_snapshotted_remaining_amount(
             assert (rest_line in sent["Html"]) is (rule == "deposit")
 
 
+@pytest.mark.parametrize("currency,price", [("EUR", 50), ("GBP", 30)])
+def test_a_deposit_paid_in_full_has_no_remaining_line(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: Any,
+    currency: str,
+    price: int,
+) -> None:
+    from tests.test_booking_payments_api import make_shop, place, sync
+
+    assert owner.put("/api/settings/currency", json={"currency": currency}).status_code == 200
+    service_id = make_shop(people, owner, fake_stripe, price=price)
+    changed = owner.patch(
+        f"/api/services/{service_id}", json={"payment_rule": "deposit", "deposit_pct": 30}
+    )
+    assert changed.status_code == 200
+    client = new_client(app)
+    booking_id = place(app, people, service_id, payment="pay", client=client).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(booking_id))
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+
+    for template, team, locale in (
+        ("booking_received", False, "en"),
+        ("booking_request", True, "nl"),
+    ):
+        with tenant_context(people.a) as session:
+            line = mail.payment_line(session, template, booking_id, "pending", locale, team)
+        assert line == mail._line("team_paid" if team else "paid", locale, price, currency)
+
+
 # ZIF-158 B3 review 9. fence. The expected strings are Node's Intl.NumberFormat(locale, {style:
 # "currency", currency, currencyDisplay: "narrowSymbol"}).format(minor / 100), the frontend's
 # formatMoney (frontend/lib/money.ts), run in node:24-alpine. Kills: no digit grouping; a plain

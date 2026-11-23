@@ -153,6 +153,7 @@ def _html(template: str, locale: str, subject: str, values: dict[str, str]) -> s
     escaped (client names, messages and business names come from strangers), and so is the file's
     own text, so nothing a value holds can become markup."""
     safe = {key: escape(value) for key, value in values.items()}
+    # A deposit's payment card row carries the paid amount and the remaining balance on two lines.
     if "payment" in safe:
         safe["payment"] = safe["payment"].replace("\n", "<br>")
 
@@ -849,7 +850,7 @@ def payment_line(
         if team:
             key = "team_" + key
         said = _line(key, locale, paid.amount_minor, paid.currency)
-        if paid.status == "paid" and paid.payment_rule == "deposit":
+        if paid.status == "paid" and paid.payment_rule == "deposit" and paid.remaining_minor > 0:
             said += "\n" + _line("remaining", locale, paid.remaining_minor, paid.currency)
         return said
     if paid.status != "paid":
