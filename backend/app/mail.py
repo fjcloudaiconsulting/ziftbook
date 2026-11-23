@@ -153,6 +153,8 @@ def _html(template: str, locale: str, subject: str, values: dict[str, str]) -> s
     escaped (client names, messages and business names come from strangers), and so is the file's
     own text, so nothing a value holds can become markup."""
     safe = {key: escape(value) for key, value in values.items()}
+    if "payment" in safe:
+        safe["payment"] = safe["payment"].replace("\n", "<br>")
 
     def fill(part: str) -> str:
         return Template(escape(part)).substitute(safe)
@@ -728,11 +730,13 @@ FOR SHARE OF c
 # (a client's own cancel stores it on the event).
 PAYMENT_LINE = text("""
 SELECT p.status, p.amount_minor, p.currency, p.stripe_fee_minor,
+       b.payment_rule, b.price_amount_minor - b.payment_due_minor AS remaining_minor,
        left(p.intent_id, 5) = 'seti_' AS setup,
        (SELECT (e.details ->> 'refund_pct')::int FROM booking_events e
         WHERE e.booking_id = p.booking_id AND e.event = 'cancelled_by_client'
         ORDER BY e.id DESC LIMIT 1) AS client_pct
 FROM booking_payments p
+JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
 WHERE p.booking_id = :id AND p.status IN ('checked', 'paid')
 """)
 
@@ -770,6 +774,11 @@ PAYMENT_LINES = {
         "en": "You paid $amount.",
         "nl": "Je hebt $amount betaald.",
         "pt": "Você pagou $amount.",
+    },
+    "remaining": {
+        "en": "$amount due at the appointment.",
+        "nl": "$amount te betalen bij de afspraak.",
+        "pt": "$amount a pagar no dia do atendimento.",
     },
     "refund": {
         "en": "$amount will be refunded to your payment method. "
@@ -839,7 +848,10 @@ def payment_line(
         key = "checked_setup" if paid.setup else paid.status
         if team:
             key = "team_" + key
-        return _line(key, locale, paid.amount_minor, paid.currency)
+        said = _line(key, locale, paid.amount_minor, paid.currency)
+        if paid.status == "paid" and paid.payment_rule == "deposit":
+            said += "\n" + _line("remaining", locale, paid.remaining_minor, paid.currency)
+        return said
     if paid.status != "paid":
         return ""
     pct = (paid.client_pct or 0) if status == "cancelled_by_client" else 100
