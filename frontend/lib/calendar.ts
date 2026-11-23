@@ -2,6 +2,7 @@
 // day column (wall-clock minutes of the business zone, never ms since midnight), lane packing, the
 // visible hour range, which actions a booking offers, its history lines and the URL state. Free of
 // React so node --test can run it in any runner zone.
+import type { FeatureAccess } from "./billing.ts";
 import { canAnswerRequests } from "./console.ts";
 import { formatMoney } from "./money.ts";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.ts";
@@ -235,11 +236,11 @@ export function mayDecline(payment: { status: string } | null | undefined, role:
  * start; leaving `completed` is the owner's alone, and a pending is answered only by who
  * `canAnswerRequests` allows. A cancellation that has started or holds a paid payment ends in a refund, so it is the owner's too,
  * and so is declining a paid request (`mayDecline`). */
-export function actionsFor(detail: { status: string; expired: boolean; starts_at: string; payment?: { status: string } | null }, role: Role, now: Date, workersAnswerRequests: boolean): Action[] {
+export function actionsFor(detail: { status: string; expired: boolean; starts_at: string; payment?: { status: string } | null }, role: Role, now: Date, workersAnswerRequests: boolean, entitlements: FeatureAccess): Action[] {
   const started = new Date(detail.starts_at).getTime() <= now.getTime();
   switch (detail.status) {
     case "pending":
-      if (detail.expired || !canAnswerRequests(role, workersAnswerRequests)) return [];
+      if (detail.expired || !canAnswerRequests(role, workersAnswerRequests, entitlements)) return [];
       return mayDecline(detail.payment, role) ? ["accept", "decline"] : ["accept"];
     case "confirmed":
       // Only a confirmed booking moves: a pending one is accepted first (the client's request was for that time).

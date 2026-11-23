@@ -15,6 +15,7 @@ import {
   servicesUpdate,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
+import { hasFeature } from "@/lib/billing";
 import { archivedDate, tabKeyTarget } from "@/lib/console";
 import { currencySign, formatMoney, parseMoney, priceText, signFirst } from "@/lib/money";
 import { photoChange, savePhotoError } from "@/lib/photo-upload";
@@ -36,7 +37,7 @@ import {
   serviceName,
 } from "@/lib/services";
 
-import { SignedOutBanner, useConsole } from "../../_ui/console";
+import { FeatureNote, SignedOutBanner, useConsole } from "../../_ui/console";
 import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import { ServiceTile } from "../../_ui/service-tile";
 import { type PhotoError, type PhotoField, PhotoFieldset } from "./photo-field";
@@ -447,7 +448,7 @@ function ServiceFormBody(props: Props) {
   const consoleForm = useTranslations("Form");
   const locale = useLocale();
   const router = useRouter();
-  const { call, session, settings } = useConsole();
+  const { call, session, settings, entitlements } = useConsole();
   const currencyName = useCurrencyName(session.currency, locale);
 
   const editing = props.mode === "edit";
@@ -470,9 +471,10 @@ function ServiceFormBody(props: Props) {
   const [depositPct, setDepositPct] = useState(() => (service?.deposit_pct != null ? String(service.deposit_pct) : "30"));
   // null: not read yet (or the switch is off, so there is nothing to read): no hint until known.
   const [stripeReady, setStripeReady] = useState<boolean | null>(null);
-  const online = settings.payment_check && stripeReady === true;
-  const onlineKnown = !settings.payment_check || stripeReady !== null;
-  const ruleView = paymentRuleView(paymentRule, online);
+  const deposits = hasFeature(entitlements, "deposits");
+  const online = hasFeature(entitlements, "online_payments") && settings.payment_check && stripeReady === true;
+  const onlineKnown = entitlements !== undefined && (!hasFeature(entitlements, "online_payments") || !settings.payment_check || stripeReady !== null);
+  const ruleView = paymentRuleView(paymentRule, online, deposits);
   const [photo, setPhoto] = useState<PhotoField>({ kind: "saved" });
   const [photoError, setPhotoError] = useState<PhotoError | null>(null);
   const photoErrorRef = useRef<HTMLDivElement>(null);
@@ -812,6 +814,8 @@ function ServiceFormBody(props: Props) {
         <p className={styles.hint} id="service-pay-hint">
           {onlineKnown && !online ? t("payOffHint") : t("payHint")}
         </p>
+        <FeatureNote feature="online_payments" />
+        {hasFeature(entitlements, "online_payments") && <FeatureNote feature="deposits" />}
         <div className={styles.choices} style={{ marginTop: "0.5rem" }}>
           {PAYMENT_RULES.map((rule) => (
             <label className={styles.choice} key={rule}>
@@ -848,7 +852,7 @@ function ServiceFormBody(props: Props) {
                 min={1}
                 max={99}
                 value={depositPct}
-                disabled={!online}
+                disabled={!online || !deposits}
                 onChange={(event) => {
                   markDirty();
                   setDepositPct(event.target.value);

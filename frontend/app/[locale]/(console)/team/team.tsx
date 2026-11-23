@@ -843,7 +843,7 @@ export function PersonActions({
  * tab body underneath changes. While the blocked-time tab is showing its own form, the form's own
  * heading is the only `<h1>` on screen: this header hides rather than doubling up. */
 export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "timeOff" }) {
-  const { session, settings, call, updateSession } = useConsole();
+  const { session, settings, call, updateSession, entitlements } = useConsole();
   const t = useTranslations("Console.person");
   const account = useTranslations("Console.account");
   const form = useTranslations("Form");
@@ -947,7 +947,7 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
       {tab === "hours" ? (
         <HoursSection
           memberId={memberId}
-          editable={canEditHours(session.role as Role, memberId === session.member_id, settings.workers_edit_own_hours)}
+          editable={canEditHours(session.role as Role, memberId === session.member_id, settings.workers_edit_own_hours, entitlements)}
           ownerView
         />
       ) : (

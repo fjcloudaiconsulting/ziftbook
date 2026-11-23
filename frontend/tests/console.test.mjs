@@ -26,29 +26,42 @@ import {
   writeOutcome,
 } from "../lib/console.ts";
 
+const workerPlan = { values: { worker_permissions: true } };
+
 describe("canAnswerRequests (ZIF-143)", () => {
   test("an owner always answers; a worker only while the business allows it", () => {
-    assert.equal(canAnswerRequests("owner", false), true);
-    assert.equal(canAnswerRequests("worker", true), true);
-    assert.equal(canAnswerRequests("worker", false), false);
+    assert.equal(canAnswerRequests("owner", false, workerPlan), true);
+    assert.equal(canAnswerRequests("worker", true, workerPlan), true);
+    assert.equal(canAnswerRequests("worker", false, workerPlan), false);
   });
 });
 
 describe("canEditHours", () => {
   test("guard: an owner always may, self or not", () => {
-    assert.equal(canEditHours("owner", true, false), true);
-    assert.equal(canEditHours("owner", false, false), true);
-    assert.equal(canEditHours("owner", false, true), true);
+    assert.equal(canEditHours("owner", true, false, workerPlan), true);
+    assert.equal(canEditHours("owner", false, false, workerPlan), true);
+    assert.equal(canEditHours("owner", false, true, workerPlan), true);
   });
 
   test("fence: a worker may only edit their own hours, never anyone else's", () => {
-    assert.equal(canEditHours("worker", false, true), false, "someone else's hours, even with the setting on");
+    assert.equal(canEditHours("worker", false, true, workerPlan), false, "someone else's hours, even with the setting on");
   });
 
   test("fence: a worker's own hours still need the setting on", () => {
-    assert.equal(canEditHours("worker", true, false), false);
-    assert.equal(canEditHours("worker", true, true), true);
+    assert.equal(canEditHours("worker", true, false, workerPlan), false);
+    assert.equal(canEditHours("worker", true, true, workerPlan), true);
   });
+});
+
+describe("worker permissions follow the plan (ZIF-298)", () => {
+  for (const entitlements of [null, { values: {} }, { values: { worker_permissions: false } }, { values: { worker_permissions: 1 } }]) {
+    test(`stored permissions cannot enable worker actions with ${JSON.stringify(entitlements)}`, () => {
+      assert.equal(canAnswerRequests("worker", true, entitlements), false);
+      assert.equal(canEditHours("worker", true, true, entitlements), false);
+      assert.equal(canAnswerRequests("owner", true, entitlements), true);
+      assert.equal(canEditHours("owner", false, true, entitlements), true);
+    });
+  }
 });
 
 describe("needsName", () => {

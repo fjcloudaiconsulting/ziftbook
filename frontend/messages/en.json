@@ -1200,6 +1200,7 @@
       "other": "this feature"
     },
     "planLimit": {
+      "unavailable": "Plan details are unavailable. Reload the page to try again.",
       "owner": "{feature} isn't part of your plan.",
       "worker": "{feature} isn't part of your plan. Ask the business owner.",
       "link": "Choose a plan"

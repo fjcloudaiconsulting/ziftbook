@@ -2,6 +2,8 @@
 // business's own language, comparing two sessions before a write, and measuring the sticky bars.
 // Kept free of React so node --test can run it directly.
 
+import { type FeatureAccess, hasFeature } from "./billing.ts";
+
 export type Role = "owner" | "worker";
 
 export const SECTIONS = ["today", "calendar", "services", "team", "my-hours", "clients", "opening-hours", "settings"] as const;
@@ -48,16 +50,16 @@ export function allowed(role: Role, pathname: string): boolean {
 
 /** Whether a role may PUT a member's working hours, mirroring the server's own rule
  * (`schedule.py:152`): an owner changes anyone's; a worker only their own, and only while the
- * business allows it. The UI reads this to decide editable vs read-only; the API enforces it. */
-export function canEditHours(role: Role, isSelf: boolean, workersEditOwnHours: boolean): boolean {
-  return role === "owner" || (isSelf && workersEditOwnHours);
+ * business and plan allow it. The UI reads this to decide editable vs read-only; the API enforces it. */
+export function canEditHours(role: Role, isSelf: boolean, workersEditOwnHours: boolean, entitlements: FeatureAccess): boolean {
+  return role === "owner" || (isSelf && workersEditOwnHours && hasFeature(entitlements, "worker_permissions"));
 }
 
 /** Whether a role may accept or decline its pending requests, mirroring the API's transition
- * (`bookings.py`, ZIF-143): an owner always; a worker their own, only while the business allows it.
+ * (`bookings.py`, ZIF-143): an owner always; a worker their own, only while the business and plan allow it.
  * Off, a worker still sees their requests, read only. */
-export function canAnswerRequests(role: Role, workersAnswerRequests: boolean): boolean {
-  return role === "owner" || workersAnswerRequests;
+export function canAnswerRequests(role: Role, workersAnswerRequests: boolean, entitlements: FeatureAccess): boolean {
+  return role === "owner" || (workersAnswerRequests && hasFeature(entitlements, "worker_permissions"));
 }
 
 /** Whether the person still has to give their own name: the API refuses everything else with

@@ -28,6 +28,7 @@ import {
   saveRefusal,
   SLOT_STEPS,
   settingsBody,
+  settingAvailable,
   slotExamples,
   type Tab,
   tabFromQuery,
@@ -36,7 +37,7 @@ import {
   zoneOptions,
 } from "@/lib/settings";
 
-import { SignedOutBanner, useConsole } from "../../_ui/console";
+import { FeatureNote, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { NAMES } from "../../_ui/header";
 import { Banner, Chevron, FieldError, Heading, problem, Submit } from "../../_ui/parts";
@@ -103,7 +104,7 @@ function Field({
 }
 
 export function Settings() {
-  const { session, settings, call, updateSettings } = useConsole();
+  const { session, settings, call, updateSettings, entitlements } = useConsole();
   const t = useTranslations("Console.settings");
   const tWeek = useTranslations("Console.week");
   const nav = useTranslations("Console.nav");
@@ -379,26 +380,30 @@ export function Settings() {
     </>
   );
   const fid = (key: Key) => `${formId}-${key}`;
-  const check = (key: Key, label: string, hint: string, off = false) => (
-    <div className={styles.checkRow}>
-      <input
-        id={fid(key)}
-        type="checkbox"
-        checked={draft[key] as boolean}
-        disabled={off}
-        onChange={(e) => set(key, e.target.checked)}
-        aria-describedby={`${fid(key)}-hint`}
-      />
-      <div className={`${uiStyles.field} ${styles.checkText}`}>
-        <label className={uiStyles.label} htmlFor={fid(key)} style={off ? { color: "var(--muted)" } : undefined}>
-          {label}
-        </label>
-        <p className={uiStyles.hint} id={`${fid(key)}-hint`}>
-          {hint}
-        </p>
+  const check = (key: Key, label: string, hint: string, off = false) => {
+    const available = settingAvailable(key, entitlements);
+    off = off || !available;
+    return (
+      <div className={styles.checkRow}>
+        <input
+          id={fid(key)}
+          type="checkbox"
+          checked={available && (draft[key] as boolean)}
+          disabled={off}
+          onChange={(e) => set(key, e.target.checked)}
+          aria-describedby={`${fid(key)}-hint`}
+        />
+        <div className={`${uiStyles.field} ${styles.checkText}`}>
+          <label className={uiStyles.label} htmlFor={fid(key)} style={off ? { color: "var(--muted)" } : undefined}>
+            {label}
+          </label>
+          <p className={uiStyles.hint} id={`${fid(key)}-hint`}>
+            {hint}
+          </p>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
   const zones = zoneOptions(settings.timezone, Intl.supportedValuesOf("timeZone"));
   const showBar = dirty || saving || saveFailed;
   const marked = dirtyTabs(changed);
@@ -674,6 +679,7 @@ export function Settings() {
           </legend>
           <p className={styles.sectionDesc}>{t("teamDesc")}</p>
           <div className={styles.sectionBody}>
+          <FeatureNote feature="worker_permissions" />
           {check("workers_edit_own_hours", t("workersEditLabel"), t("workersEditHint"))}
           {check("workers_answer_requests", t("workersAnswerLabel"), t("workersAnswerHint"))}
           </div>

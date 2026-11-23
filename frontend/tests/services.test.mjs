@@ -260,8 +260,26 @@ describe("how clients pay (ZIF-62)", () => {
   test("fence: while online payments are off, only 'at the appointment' can be picked and a stored online rule is kept and flagged", () => {
     // ZIF-62 fence. Kills: online rules offered while the switch is off or Stripe isn't ready (the client
     // would never be asked to pay), and a stored online rule silently dropped or not explained.
-    assert.deepEqual(paymentRuleView("deposit", false), { disabled: ["choice", "deposit", "prepaid"], waits: true });
-    assert.deepEqual(paymentRuleView("in_person", false), { disabled: ["choice", "deposit", "prepaid"], waits: false });
-    for (const rule of ["in_person", "choice", "deposit", "prepaid"]) assert.deepEqual(paymentRuleView(rule, true), { disabled: [], waits: false });
+    assert.deepEqual(paymentRuleView("deposit", false, true), { disabled: ["choice", "deposit", "prepaid"], waits: true });
+    assert.deepEqual(paymentRuleView("in_person", false, true), { disabled: ["choice", "deposit", "prepaid"], waits: false });
+    for (const rule of ["in_person", "choice", "deposit", "prepaid"]) assert.deepEqual(paymentRuleView(rule, true, true), { disabled: [], waits: false });
+  });
+});
+
+describe("deposit entitlements (ZIF-298)", () => {
+  test("online payments alone do not enable deposit or prepayment choices", () => {
+    for (const rule of ["in_person", "choice", "deposit", "prepaid"]) {
+      assert.deepEqual(paymentRuleView(rule, true, false), { disabled: ["deposit", "prepaid"], waits: false });
+    }
+  });
+  test("deposits do not enable choices while online payments are unavailable", () => {
+    assert.deepEqual(paymentRuleView("deposit", false, true), { disabled: ["choice", "deposit", "prepaid"], waits: true });
+  });
+  test("a stored deposit survives saving an unrelated field after a downgrade", () => {
+    const rule = "deposit";
+    assert.ok(paymentRuleView(rule, true, false).disabled.includes(rule));
+    const result = body({ name: { en: "Renamed" }, description: {}, price: "35", duration: "45", gap: "default", paymentRule: rule, depositPct: "30" });
+    assert.equal(result.body.payment_rule, "deposit");
+    assert.equal(result.body.deposit_pct, 30);
   });
 });

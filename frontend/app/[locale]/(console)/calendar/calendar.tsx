@@ -56,7 +56,7 @@ function remembered(key: string): string | null {
 const memberOf = (item: Item) => (item.kind === "booking" ? item.booking.worker_id : item.block.member_id);
 
 export function Calendar() {
-  const { session, settings, call } = useConsole();
+  const { session, settings, call, entitlements } = useConsole();
   const t = useTranslations("Console.calendar");
   const today = useTranslations("Console.today");
   const nav = useTranslations("Console.nav");
@@ -65,7 +65,7 @@ export function Calendar() {
   const locale = useLocale();
   const tz = settings.timezone;
   const isOwner = session.role === "owner";
-  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests);
+  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests, entitlements);
   const params = useSearchParams();
   const router = useRouter();
 

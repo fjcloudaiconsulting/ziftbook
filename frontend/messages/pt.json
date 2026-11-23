@@ -1200,6 +1200,7 @@
       "other": "este recurso"
     },
     "planLimit": {
+      "unavailable": "Os detalhes do plano estão indisponíveis. Recarregue a página para tentar novamente.",
       "owner": "{feature} não faz parte do seu plano.",
       "worker": "{feature} não faz parte do plano. Fale com o dono do negócio.",
       "link": "Escolher um plano"

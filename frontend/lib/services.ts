@@ -131,8 +131,8 @@ export function serviceBody(form: ServiceForm, parsePrice: (text: string) => num
 /** ZIF-62: the rules the form offers. While online payments are off (the business's switch, or Stripe
  * not ready) only `in_person` can be picked; a stored online rule stays selected and is kept, and
  * `waits` says it books in person until online payments are on. */
-export function paymentRuleView(rule: PaymentRule, online: boolean): { disabled: PaymentRule[]; waits: boolean } {
-  if (online) return { disabled: [], waits: false };
+export function paymentRuleView(rule: PaymentRule, online: boolean, deposits: boolean): { disabled: PaymentRule[]; waits: boolean } {
+  if (online) return { disabled: deposits ? [] : ["deposit", "prepaid"], waits: false };
   return { disabled: PAYMENT_RULES.filter((r) => r !== "in_person"), waits: rule !== "in_person" };
 }
 

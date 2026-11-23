@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { bannerFor, billingError, canManage, canSubscribeTo, daysLeft, feeLabel, isStripeUrl, priceLabel, priceNote, stillBilled } from "../lib/billing.ts";
+import { bannerFor, billingError, canManage, canSubscribeTo, daysLeft, featureNotice, feeLabel, hasFeature, isStripeUrl, priceLabel, priceNote, stillBilled } from "../lib/billing.ts";
 
 const now = new Date("2026-11-21T12:00:00Z");
 const base = { source: "default", trial_ends_at: null, grant_ends_at: null, grace_ends_at: null };
@@ -187,4 +187,18 @@ describe("isStripeUrl", () => {
     for (const url of ["javascript:alert(1)", "data:text/html,x", "http://checkout.stripe.com/x", "https://evil.example", "https://checkout.stripe.com.evil.example/x", "not a url", ""])
       assert.equal(isStripeUrl(url), false, url);
   });
+});
+
+test("only a true entitlement flag enables a feature (ZIF-298)", () => {
+  for (const value of [false, 0, 1, undefined]) assert.equal(hasFeature({ values: { online_payments: value } }, "online_payments"), false);
+  assert.equal(hasFeature(null, "online_payments"), false);
+  assert.equal(hasFeature({ values: { online_payments: true } }, "online_payments"), true);
+});
+
+test("feature notes distinguish loading, failed reads, missing features and available features", () => {
+  assert.equal(hasFeature(undefined, "online_payments"), false);
+  assert.equal(featureNotice(undefined, "online_payments"), null);
+  assert.equal(featureNotice(null, "online_payments"), "unavailable");
+  assert.equal(featureNotice({ values: { online_payments: false } }, "online_payments"), "upgrade");
+  assert.equal(featureNotice({ values: { online_payments: true } }, "online_payments"), null);
 });

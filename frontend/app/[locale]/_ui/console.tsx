@@ -20,7 +20,7 @@ import {
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { bannerFor } from "@/lib/billing";
+import { bannerFor, featureNotice } from "@/lib/billing";
 import { allowed, canAnswerRequests, dateLocale, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { forgetPick, type Locale, pickedHere, resolveLocale } from "@/lib/locale";
 import { badgeText } from "@/lib/today";
@@ -54,9 +54,9 @@ type ConsoleContextValue = {
    * after it loads and after each answer, so the badge follows what the page shows. */
   pendingCount: number | null;
   setPendingCount: Dispatch<SetStateAction<number | null>>;
-  /** The business's plan and what it allows (ZIF-79), read once with the session. `null` until that read
-   * lands, and for good if it failed: no banner, never a failed console. */
-  entitlements: EntitlementsOut | null;
+  /** The business's plan and what it allows: undefined while loading, null if the read failed.
+   * A failed read leaves the console usable, with gated controls unavailable. */
+  entitlements: EntitlementsOut | null | undefined;
   /** Reads the plan again (after Checkout, or when a screen knows it changed). A failed read keeps what is shown. */
   reloadEntitlements(): Promise<void>;
   /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
@@ -277,17 +277,29 @@ function PlanBanner({ entitlements, owner, timeZone, locale }: { entitlements: E
   );
 }
 
-/** A 402 plan_limit, anywhere: which feature the plan lacks, and where an owner fixes that. */
-function PlanLimitNote({ feature, owner }: { feature: string; owner: boolean }) {
+/** A feature's availability beside its controls, including while the plan read is unresolved. */
+export function FeatureNote({ feature }: { feature: string }) {
+  const { entitlements, session } = useConsole();
   const t = useTranslations("Console.planLimit");
-  // A page's own tab (?tab=) is a new place: the note belongs to the one it came up on.
+  const notice = featureNotice(entitlements, feature);
+  if (!notice) return null;
+  if (notice === "unavailable") return <Banner tone="note">{t("unavailable")}</Banner>;
+  return <PlanLimitNote feature={feature} owner={session.role === "owner"} />;
+}
+
+/** A 402 belongs to the tab on which it happened. Inline feature notes stay with their controls. */
+function PlanLimitAlert({ feature, owner }: { feature: string; owner: boolean }) {
   const query = useSearchParams().toString();
   const [cameUpOn] = useState(query);
+  return query === cameUpOn ? <PlanLimitNote feature={feature} owner={owner} /> : null;
+}
+
+function PlanLimitNote({ feature, owner }: { feature: string; owner: boolean }) {
+  const t = useTranslations("Console.planLimit");
   const features = useTranslations("Console.features");
-  // The API names any feature key (a new one may predate its copy): unknown keys read "this feature".
+  // Unknown feature keys still have a readable explanation.
   const key = feature as "other";
   const name = features.has(key) ? features(key) : features("other");
-  if (query !== cameUpOn) return null;
   return (
     <Banner tone="note">
       {t(owner ? "owner" : "worker", { feature: name })}
@@ -447,7 +459,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [version, setVersion] = useState<AppVersion | null>(null);
-  const [entitlements, setEntitlements] = useState<EntitlementsOut | null>(null);
+  const [entitlements, setEntitlements] = useState<EntitlementsOut | null | undefined>(undefined);
   // The feature a 402 plan_limit named on this page, for the upgrade message; a new page starts clean.
   const [planLimit, setPlanLimit] = useState<{ feature: string; n: number } | null>(null);
   const [planLimitPath, setPlanLimitPath] = useState(pathname);
@@ -490,7 +502,7 @@ export function Shell({ children }: { children: ReactNode }) {
           if (!cancelled && rows) setPendingCount((current) => current ?? rows.length);
         });
         send(billingReadEntitlements()).then((plan) => {
-          if (!cancelled && plan.status === 200 && plan.data) setEntitlements(plan.data);
+          if (!cancelled) setEntitlements(plan.status === 200 && plan.data ? plan.data : null);
         });
       }
     });
@@ -526,6 +538,7 @@ export function Shell({ children }: { children: ReactNode }) {
   async function reloadEntitlements() {
     const outcome = await send(billingReadEntitlements());
     if (outcome.status === 200 && outcome.data) setEntitlements(outcome.data);
+    else setEntitlements((current) => current ?? null);
   }
 
   /** Every answer passes here, so a 402 plan_limit gets its upgrade message wherever it comes from. */
@@ -575,8 +588,10 @@ export function Shell({ children }: { children: ReactNode }) {
       return;
     }
     setSession(named);
-    if (outcome.status === 200 && outcome.data) setSettings(outcome.data);
-    else setFailure(problem(outcome));
+    if (outcome.status === 200 && outcome.data) {
+      setSettings(outcome.data);
+      void reloadEntitlements();
+    } else setFailure(problem(outcome));
   }
 
   async function onSignOut(everywhere: boolean) {
@@ -630,7 +645,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const nav = navFor(session.role as Role);
   const current = sectionOf(pathname);
   // The badge counts requests for this person to answer: none for a worker who can't (ZIF-143).
-  const badge = canAnswerRequests(session.role as Role, settings.workers_answer_requests) ? pendingCount : null;
+  const badge = canAnswerRequests(session.role as Role, settings.workers_answer_requests, entitlements) ? pendingCount : null;
 
   return (
     <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, entitlements, reloadEntitlements, footerSlot }}>
@@ -674,7 +689,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className={styles.col}>
               {planLimit && (
                 <Suspense key={planLimit.n} fallback={null}>
-                  <PlanLimitNote feature={planLimit.feature} owner={session.role === "owner"} />
+                  <PlanLimitAlert feature={planLimit.feature} owner={session.role === "owner"} />
                 </Suspense>
               )}
               {children}

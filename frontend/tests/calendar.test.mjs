@@ -14,6 +14,8 @@ import { formatMoney } from "../lib/money.ts";
 const AMS = "Europe/Amsterdam";
 const at = (iso) => new Date(iso).getTime();
 
+const workerPlan = { values: { worker_permissions: true } };
+
 describe("weekStart (F1)", () => {
   test("a Sunday belongs to the week that began the Monday before", () => {
     assert.equal(weekStart("2026-10-04"), "2026-09-28");
@@ -139,42 +141,42 @@ describe("actionsFor (F7)", () => {
   const now = new Date("2026-09-30T12:00:00Z");
   const base = { expired: false, starts_at: "2026-09-30T10:00:00Z" };
   test("a lapsed pending hold offers nothing", () => {
-    assert.deepEqual(actionsFor({ ...base, status: "pending", expired: true }, "owner", now, false), []);
+    assert.deepEqual(actionsFor({ ...base, status: "pending", expired: true }, "owner", now, false, workerPlan), []);
   });
   // ZIF-143 fence. Kills: ignoring the setting (worker off gets buttons), ignoring the role (owner off gets none).
   test("a live pending offers accept and decline to whoever may answer it", () => {
-    assert.deepEqual(actionsFor({ ...base, status: "pending" }, "owner", now, false), ["accept", "decline"]);
-    assert.deepEqual(actionsFor({ ...base, status: "pending" }, "worker", now, true), ["accept", "decline"]);
-    assert.deepEqual(actionsFor({ ...base, status: "pending" }, "worker", now, false), []);
+    assert.deepEqual(actionsFor({ ...base, status: "pending" }, "owner", now, false, workerPlan), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...base, status: "pending" }, "worker", now, true, workerPlan), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...base, status: "pending" }, "worker", now, false, workerPlan), []);
   });
   test("confirmed: completed and no-show open at the start, not a minute before", () => {
-    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:00:00Z" }, "owner", now, false), ["completed", "no_show", "reschedule", "cancel"]);
-    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:01:00Z" }, "owner", now, false), ["reschedule", "cancel"]);
+    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:00:00Z" }, "owner", now, false, workerPlan), ["completed", "no_show", "reschedule", "cancel"]);
+    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:01:00Z" }, "owner", now, false, workerPlan), ["reschedule", "cancel"]);
   });
   test("only a confirmed booking can be rescheduled (a pending one is accepted first, D7)", () => {
     for (const status of ["pending", "completed", "no_show", "awaiting_payment"]) {
-      assert.ok(!actionsFor({ ...base, status }, "owner", now, false).includes("reschedule"), status);
+      assert.ok(!actionsFor({ ...base, status }, "owner", now, false, workerPlan).includes("reschedule"), status);
     }
   });
   // ZB-02 fence. Kills: a worker offered a cancel that ends in a refund.
   test("a worker is offered no cancel on a started or paid booking, but on a future unpaid one", () => {
     const future = { ...base, status: "confirmed", starts_at: "2026-10-01T10:00:00Z" };
-    assert.ok(!actionsFor({ ...base, status: "confirmed" }, "worker", now, false).includes("cancel"));
-    assert.ok(!actionsFor({ ...future, payment: { status: "paid" } }, "worker", now, false).includes("cancel"));
-    assert.deepEqual(actionsFor(future, "worker", now, false), ["reschedule", "cancel"]);
-    assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, false), ["reschedule", "cancel"]);
-    assert.ok(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false).includes("cancel"));
-    assert.ok(actionsFor({ ...base, status: "confirmed" }, "owner", now, false).includes("cancel"));
+    assert.ok(!actionsFor({ ...base, status: "confirmed" }, "worker", now, false, workerPlan).includes("cancel"));
+    assert.ok(!actionsFor({ ...future, payment: { status: "paid" } }, "worker", now, false, workerPlan).includes("cancel"));
+    assert.deepEqual(actionsFor(future, "worker", now, false, workerPlan), ["reschedule", "cancel"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, false, workerPlan), ["reschedule", "cancel"]);
+    assert.ok(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false, workerPlan).includes("cancel"));
+    assert.ok(actionsFor({ ...base, status: "confirmed" }, "owner", now, false, workerPlan).includes("cancel"));
   });
   // ZB-02 fence, declines. Kills: a worker offered a decline that refunds a paid request; a check that also takes
   // the decline from an owner, from an unpaid request, or from one whose time has started.
   test("a worker who may answer is offered no decline on a paid request, but on an unpaid one, started or not", () => {
     const future = { ...base, status: "pending", starts_at: "2026-10-01T10:00:00Z" };
-    assert.deepEqual(actionsFor({ ...future, payment: { status: "paid" } }, "worker", now, true), ["accept"]);
-    assert.deepEqual(actionsFor({ ...base, status: "pending", payment: { status: "paid" } }, "worker", now, true), ["accept"]);
-    assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, true), ["accept", "decline"]);
-    assert.deepEqual(actionsFor({ ...base, status: "pending", payment: null }, "worker", now, true), ["accept", "decline"]);
-    assert.deepEqual(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "paid" } }, "worker", now, true, workerPlan), ["accept"]);
+    assert.deepEqual(actionsFor({ ...base, status: "pending", payment: { status: "paid" } }, "worker", now, true, workerPlan), ["accept"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, true, workerPlan), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...base, status: "pending", payment: null }, "worker", now, true, workerPlan), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false, workerPlan), ["accept", "decline"]);
   });
   // The Today queue asks the same question of a queue row.
   test("mayDecline: a paid request is the owner's to decline", () => {
@@ -187,12 +189,12 @@ describe("actionsFor (F7)", () => {
     assert.equal(isPaid(undefined), false);
   });
   test("completed is the owner's to undo, a worker gets nothing", () => {
-    assert.deepEqual(actionsFor({ ...base, status: "completed" }, "worker", now, false), []);
-    assert.deepEqual(actionsFor({ ...base, status: "completed" }, "owner", now, false), ["restore", "no_show", "cancel"]);
+    assert.deepEqual(actionsFor({ ...base, status: "completed" }, "worker", now, false, workerPlan), []);
+    assert.deepEqual(actionsFor({ ...base, status: "completed" }, "owner", now, false, workerPlan), ["restore", "no_show", "cancel"]);
   });
   test("no-show and awaiting payment offer nothing", () => {
-    assert.deepEqual(actionsFor({ ...base, status: "no_show" }, "owner", now, false), []);
-    assert.deepEqual(actionsFor({ ...base, status: "awaiting_payment" }, "owner", now, false), []);
+    assert.deepEqual(actionsFor({ ...base, status: "no_show" }, "owner", now, false, workerPlan), []);
+    assert.deepEqual(actionsFor({ ...base, status: "awaiting_payment" }, "owner", now, false, workerPlan), []);
   });
 });
 
@@ -669,4 +671,12 @@ describe("a booking row's second line, shared by the calendar's phone list and T
       assert.match(readFileSync(new URL(`../app/[locale]/(console)/${page}`, import.meta.url), "utf8"), /\bbookingMeta\(booking, isOwner,/, page);
     }
   });
+});
+
+test("a worker cannot answer a request when the plan lacks worker permissions (ZIF-298)", () => {
+  const detail = { status: "pending", expired: false, starts_at: "2026-09-30T12:00:00Z" };
+  for (const entitlements of [null, { values: { worker_permissions: false } }]) {
+    assert.deepEqual(actionsFor(detail, "worker", new Date(detail.starts_at), true, entitlements), []);
+    assert.deepEqual(actionsFor(detail, "owner", new Date(detail.starts_at), false, entitlements), ["accept", "decline"]);
+  }
 });
