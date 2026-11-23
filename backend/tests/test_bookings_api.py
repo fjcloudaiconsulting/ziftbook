@@ -337,7 +337,9 @@ def test_a_start_in_the_past_or_inside_min_notice_or_beyond_the_horizon_is_refus
     assert put_settings(owner, {"min_notice_minutes": 60}).status_code == 200
 
     assert put_settings(owner, {"booking_horizon_days": 1}).status_code == 200
-    horizon = post_booking(client, people.a, ready, email=fresh_email(), starts_at=at("09:00"))
+    # Stay beyond tomorrow even if midnight passed since DAY was computed at collection.
+    beyond = at("09:00", DAY + timedelta(days=2))
+    horizon = post_booking(client, people.a, ready, email=fresh_email(), starts_at=beyond)
     assert (horizon.status_code, horizon.json()) == (409, {"code": "slot_unavailable"})
 
 
