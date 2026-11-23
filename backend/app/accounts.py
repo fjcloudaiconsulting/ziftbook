@@ -3,10 +3,12 @@
 import unicodedata
 from datetime import timedelta
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app import auth, business_settings, limits, passwords, tracing, turnstile
 from app.business_settings import BusinessSettings, Locale
@@ -140,6 +142,14 @@ def live_token(token: str, purpose: str) -> bytes:
     return digest
 
 
+def initialise_business(session: Session, tenant_id: UUID, country: Country) -> None:
+    join_tenant(session, tenant_id)
+    defaults = COUNTRIES[country]
+    starting = BusinessSettings(timezone=defaults.timezone, language=defaults.language)
+    for key, value in starting.model_dump(exclude_unset=True).items():
+        business_settings.save(session, key, value)
+
+
 @router.post(
     "/sign-up/complete",
     status_code=201,
@@ -174,11 +184,7 @@ def complete_sign_up(
             },
         ).one()
         if created.outcome == "created":
-            join_tenant(session, created.tenant_id)
-            # Validated by the registry; only what the country decides, others keep their default.
-            starting = BusinessSettings(timezone=defaults.timezone, language=defaults.language)
-            for key, value in starting.model_dump(exclude_unset=True).items():
-                business_settings.save(session, key, value)
+            initialise_business(session, created.tenant_id, country)
             auth.record(session, request, "business_created", actor_user_id=created.user_id)
             count_after_commit(session, tracing.SIGN_UPS)
     # Outside the transaction: raising inside would roll back using up the link.

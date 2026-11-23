@@ -379,6 +379,15 @@
         "incomplete_expired": "Incomplete, expired",
         "paused": "Paused"
       }
+    },
+    "createBusiness": {
+      "title": "Create business",
+      "lede": "Use a separate owner email address. The owner will receive a link to set their password. Your admin account will not join the business.",
+      "ownerName": "Owner’s name",
+      "exists": "This address already has an account. Use a new owner email address.",
+      "done": "Business created",
+      "sent": "A password setup email is queued for the owner. The business uses the usual plan and trial settings.",
+      "view": "View business"
     }
   },
   "ForgotPassword": {

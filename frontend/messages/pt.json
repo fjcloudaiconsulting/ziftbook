@@ -379,6 +379,15 @@
         "incomplete_expired": "Incompleta, expirada",
         "paused": "Em pausa"
       }
+    },
+    "createBusiness": {
+      "title": "Criar negócio",
+      "lede": "Usa um endereço de email separado para o proprietário. O proprietário receberá uma ligação para definir a palavra-passe. A tua conta de administrador não fará parte do negócio.",
+      "ownerName": "Nome do proprietário",
+      "exists": "Este endereço já tem uma conta. Usa um novo endereço de email para o proprietário.",
+      "done": "Negócio criado",
+      "sent": "O email para o proprietário definir a palavra-passe está na fila de envio. O negócio usa as definições habituais de plano e período experimental.",
+      "view": "Ver negócio"
     }
   },
   "ForgotPassword": {

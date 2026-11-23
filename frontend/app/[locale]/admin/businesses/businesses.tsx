@@ -57,6 +57,9 @@ export function Businesses() {
     <Screen wide>
       <BackLink href="/admin">{t("homeTitle")}</BackLink>
       <Heading>{t("businessesTitle")}</Heading>
+      <Link className={`${styles.button} ${styles.primary}`} href="/admin/businesses/new">
+        {t("createBusiness.title")}
+      </Link>
       <form role="search" className={styles.field} onSubmit={search}>
         <label className={styles.label} htmlFor={searchId}>
           {t("searchLabel")}

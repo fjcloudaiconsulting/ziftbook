@@ -223,6 +223,9 @@ DEFINERS = [
     # ZIF-78 (0106): keyed by an admin session with a fresh second factor; write plans, the billing
     # settings and one business's overrides, offers and grant; read no user.
     "public.admin_archive_plan(p_id_hash bytea, p_id uuid)",
+    # ZIF-297: only a live, freshly verified admin may create an ordinary owner.
+    "public.admin_create_business(p_id_hash bytea, p_email text, p_locale text, "
+    "p_business_name text, p_country text, p_currency text, p_name text)",
     "public.admin_end_grant(p_id_hash bytea, p_tenant uuid)",
     "public.admin_grant_plan(p_id_hash bytea, p_tenant uuid, p_plan uuid, p_ends timestamp with time zone, p_reason text)",  # noqa: E501
     "public.admin_offer_plan(p_id_hash bytea, p_tenant uuid, p_plan uuid, p_coupon text, p_reason text)",  # noqa: E501

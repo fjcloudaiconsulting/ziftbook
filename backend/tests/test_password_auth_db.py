@@ -641,8 +641,8 @@ FLAGS: dict[tuple[str, str], set[str]] = {
         # Inserts this business's membership; its ON CONFLICT arbiter is (v.tenant_id, user_id), so
         # only that business's row can conflict, and the UPDATE stays under tenant_isolation (0045).
         "accept_invite",
-        # Inserts the new business's first membership; reads none.
-        "complete_sign_up",
+        # Shared by signup and admin creation: inserts the first membership; reads none.
+        "create_business_owner",
     },
     ("payment_accounts", "app.stripe_webhook"): {
         # Asks only whether the caller's own business (app.tenant_id) holds an account, by its own
