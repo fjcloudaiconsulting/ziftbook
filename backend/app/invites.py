@@ -9,8 +9,9 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from app import auth, limits, passwords, tracing, turnstile
+from app import auth, entitlements, limits, passwords, tracing, turnstile
 from app.accounts import DisplayNameText
 from app.auth import CurrentOwner
 from app.db import SessionLocal, count_after_commit, tenant_context
@@ -54,6 +55,30 @@ class AcceptInvite(InviteToken):
     turnstile_token: Annotated[str, StringConstraints(max_length=turnstile.MAX_TOKEN)] | None = None
 
 
+# Serialises the places count and the write that follows it, per business (51 is bookings').
+PLACES_LOCK = text("SELECT pg_advisory_xact_lock(52, hashtext(current_setting('app.tenant_id')))")
+
+
+def places_used(db: Session, *, email: str | None = None, token_hash: bytes | None = None) -> int:
+    """The places in use (entitlements.PLACES_USED), not counting the pending invite for this email
+    or with this token hash: the one being resent or accepted takes a place only once."""
+    own = db.scalar(
+        text(
+            "SELECT count(*) FROM invites "
+            "WHERE expires_at > now() AND (email = :e OR token_hash = :h)"
+        ),
+        {"e": email, "h": token_hash},
+    )
+    return int(db.scalar(entitlements.PLACES_USED)) - int(own)
+
+
+def check_places(db: Session, *, email: str | None = None, token_hash: bytes | None = None) -> None:
+    """Under the business's places lock, 402 plan_limit unless one more person fits. The lock lasts
+    to the end of the transaction, so the write after this cannot race another count."""
+    db.execute(PLACES_LOCK)
+    entitlements.require_room(db, "places", places_used(db, email=email, token_hash=token_hash))
+
+
 INVITES = "SELECT id, email, expires_at, expires_at <= now() AS expired FROM invites"
 
 
@@ -61,7 +86,7 @@ INVITES = "SELECT id, email, expires_at, expires_at <= now() AS expired FROM inv
     "/invites",
     name="create",
     status_code=201,
-    responses={s: {"model": Error} for s in (401, 403, 409, 415, 422, 429)},
+    responses={s: {"model": Error} for s in (401, 402, 403, 409, 415, 422, 429)},
 )
 def create(
     invite: NewInvite, current: CurrentOwner, request: Request, response: Response
@@ -85,6 +110,7 @@ def create(
         {"e": invite.email},
     ):
         raise ApiError(409, "already_member")
+    check_places(current.db, email=invite.email)
     # One statement. A resend gets a new id, so its job has a new dedupe key and a queued job for
     # the old id finds nothing; the old hash goes, so the old link dies now, not when the job runs.
     row = current.db.execute(
@@ -218,7 +244,7 @@ def lookup(body: InviteToken, request: Request, response: Response) -> InviteDet
     "/invites/accept",
     name="accept",
     status_code=201,
-    responses={s: {"model": Error} for s in (400, 401, 409, 415, 422, 429, 503)},
+    responses={s: {"model": Error} for s in (400, 401, 402, 409, 415, 422, 429, 503)},
 )
 def accept(body: AcceptInvite, request: Request, response: Response) -> auth.SessionOut:
     """Join the business from an invite link, creating the account or proving the existing one's
@@ -269,11 +295,17 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
             {"u": found.user_id, "h": found.password_hash},
         ):  # reset while it was being checked
             raise ApiError(401, "invalid_credentials", headers=auth.account_cookie_cleared())
+        session.execute(PLACES_LOCK)  # held to the end: the count below cannot race another accept
         result = session.execute(
             text("SELECT * FROM accept_invite(:h, :p, :n)"),
             {"h": found.digest, "p": password_hash, "n": body.name},
         ).one()
         if result.outcome == "accepted":
+            # A downgrade since the invite was sent: the member counts now, the invite is gone, so
+            # one over means no room. Raising rolls the membership and account back.
+            entitlements.require_room(
+                session, "places", int(session.scalar(entitlements.PLACES_USED)) - 1
+            )
             count_after_commit(session, tracing.INVITES_ACCEPTED)
             auth.record(
                 session,

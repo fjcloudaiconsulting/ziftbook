@@ -15,7 +15,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth, contact_email, passwords
+from app import auth, contact_email, entitlements, passwords
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
 from app.locales import Locale as Locale  # re-exported: most modules import it from here
@@ -157,6 +157,24 @@ def read(db: Session) -> BusinessSettings:
     )
 
 
+# ZIF-78: the settings a plan's flag must allow. Off in the plan, the setting is off in effect
+# (effective()) and a PUT may not turn it on; the stored value is kept, so an upgrade restores it.
+GATED = {
+    "payment_check": "online_payments",  # read through app/payments.py available()
+    "workers_edit_own_hours": "worker_permissions",
+    "workers_answer_requests": "worker_permissions",
+}
+
+
+def effective(db: Session, settings: BusinessSettings) -> BusinessSettings:
+    """settings, with the worker permissions off while the plan has no worker_permissions."""
+    if entitlements.entitlements(db).flag("worker_permissions"):
+        return settings
+    return settings.model_copy(
+        update={"workers_edit_own_hours": False, "workers_answer_requests": False}
+    )
+
+
 def suspended(db: Session) -> bool:
     """Whether the transaction's business is suspended (ZIF-73): its public side answers like an
     unpublished page."""
@@ -188,14 +206,18 @@ router = APIRouter(prefix="/api", tags=["settings"])
 
 @router.get("/settings", name="read", responses={401: {"model": Error}})
 def read_settings(current: CurrentSession, response: Response) -> BusinessSettings:
+    """The stored settings to the owner, who edits them; to a worker, what they may do now
+    (effective): a plan without worker_permissions offers nothing the API would refuse."""
     response.headers["Cache-Control"] = "no-store"
-    return read(current.db)
+    stored = read(current.db)
+    # members.is_owner, inline: members imports accounts, which imports this module.
+    return stored if current.role == "owner" else effective(current.db, stored)
 
 
 @router.put(
     "/settings",
     name="update",
-    responses={s: {"model": Error} for s in (401, 403, 415, 422, 429, 503)},
+    responses={s: {"model": Error} for s in (401, 402, 403, 415, 422, 429, 503)},
 )
 def update_settings(
     changes: BusinessSettings,
@@ -209,6 +231,14 @@ def update_settings(
     has had too many links, and then nothing in the request is saved."""
     defaults = BusinessSettings()
     sent = changes.model_dump(exclude_unset=True)
+    # ZIF-78: turning on a setting the plan doesn't allow is 402, before anything is saved or a
+    # link sent. Re-sending one already on, or turning it off, is fine.
+    # Unlocked: a concurrent PUT turning the key on can only do so through this same gate, and the
+    # effective read at use time applies the plan whatever is stored.
+    stored = read(current.db)
+    for key, feature in GATED.items():
+        if sent.get(key) is True and not getattr(stored, key):
+            entitlements.require(current.db, feature)
     # First: it counts a link in a transaction of its own, which must come before this one holds
     # any row lock (ZIF-232).
     if "contact_email" in sent:

@@ -982,6 +982,9 @@ def send_booking(job: Job) -> None:
             return
         if template == "booking_reminder" and row.starts_at <= row.now:
             return
+        # ZIF-78: a reminder queued before the plan dropped email_reminders is not sent either.
+        if template == "booking_reminder" and not entitlements(session).flag("email_reminders"):
+            return
 
         user_id = payload.get("user_id")
         role = None  # the merchant recipient's, ZIF-143
@@ -1024,7 +1027,7 @@ def send_booking(job: Job) -> None:
             recipient_id = user_id
             recipient_email, recipient_locale, role = merchant.email, merchant.locale, merchant.role
 
-        settings = business_settings.read(session)
+        settings = business_settings.effective(session, business_settings.read(session))
         locale = recipient_locale or settings.language
         zone = settings.timezone
         starts_local = row.starts_at.astimezone(ZoneInfo(zone))
