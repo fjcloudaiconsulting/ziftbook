@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.44.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.4...v0.44.0) (2026-11-23)
+
+
+### Features
+
+* **admin:** create businesses with separate owner onboarding (ZIF-297) ([#469](https://github.com/fjcloudaiconsulting/ziftbook/issues/469)) ([2bd4790](https://github.com/fjcloudaiconsulting/ziftbook/commit/2bd47905b4011dffc2ea3a82680240ae41ed175d))
+* admins edit plans, the trial, overrides, offers and free plans in the admin console (ZIF-78) ([#458](https://github.com/fjcloudaiconsulting/ziftbook/issues/458)) ([e4c5442](https://github.com/fjcloudaiconsulting/ziftbook/commit/e4c544286a1f16cfd0e3a16a902c9882ea940f41))
+* **backend:** a downgrade gives 30 days, then only the plan's places sign in (ZIF-78) ([#457](https://github.com/fjcloudaiconsulting/ziftbook/issues/457)) ([add3c7e](https://github.com/fjcloudaiconsulting/ziftbook/commit/add3c7eed3bfb06c0b4850f8caaa6370e2d86775))
+* **backend:** places, payments, deposits, reminders and worker permissions follow the plan (ZIF-78) ([#460](https://github.com/fjcloudaiconsulting/ziftbook/issues/460)) ([7618b7d](https://github.com/fjcloudaiconsulting/ziftbook/commit/7618b7d6fe0c65ee1b00877269487e2f92142c69))
+* **backend:** plans, overrides and trials behind one entitlements check with a 402 naming the feature (ZIF-78) ([#456](https://github.com/fjcloudaiconsulting/ziftbook/issues/456)) ([ace5378](https://github.com/fjcloudaiconsulting/ziftbook/commit/ace5378522a7074caf3681c0c0f40f13e19509ad))
+* owners subscribe through Stripe Checkout, manage billing in the portal, and Stripe keeps their plan in step (ZIF-79) ([#459](https://github.com/fjcloudaiconsulting/ziftbook/issues/459)) ([7ed4e60](https://github.com/fjcloudaiconsulting/ziftbook/commit/7ed4e609c1a732da4f2b221423497d1112e0e5e1))
+* the platform fee follows the plan and the booking's source, and every fee is shown (ZIF-80) ([#461](https://github.com/fjcloudaiconsulting/ziftbook/issues/461)) ([a4fc042](https://github.com/fjcloudaiconsulting/ziftbook/commit/a4fc042ad69eb35b1454b7bad7e73eb12d671840))
+* **web:** add day, week and month calendar views (ZIF-294) ([#470](https://github.com/fjcloudaiconsulting/ziftbook/issues/470)) ([adef849](https://github.com/fjcloudaiconsulting/ziftbook/commit/adef84994d39d1efdad8c9cb47b509c057cd2f7c))
+* **web:** owners see their plan, trial and fees, and subscribe or manage billing (ZIF-79) ([#462](https://github.com/fjcloudaiconsulting/ziftbook/issues/462)) ([4da65fa](https://github.com/fjcloudaiconsulting/ziftbook/commit/4da65fa3a2e440f16a1eeb6262e2ae5e9eca83b5))
+
+
+### Bug Fixes
+
+* **backend:** show deposit balance in booking emails (ZIF-293) ([#466](https://github.com/fjcloudaiconsulting/ziftbook/issues/466)) ([6b33821](https://github.com/fjcloudaiconsulting/ziftbook/commit/6b33821ac9ca4e1deb4805c7b5e4be1a7bd324b0))
+* **deps:** update npm non-major ([#465](https://github.com/fjcloudaiconsulting/ziftbook/issues/465)) ([ae7cb03](https://github.com/fjcloudaiconsulting/ziftbook/commit/ae7cb03a6d78dbc14412bb63d59118913576aff5))
+* **web:** explain plan-gated console controls (ZIF-298) ([#467](https://github.com/fjcloudaiconsulting/ziftbook/issues/467)) ([7539fe9](https://github.com/fjcloudaiconsulting/ziftbook/commit/7539fe9cdd78b4fd0d9e4d51b363e330132a1a87))
+
 ## [0.43.4](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.3...v0.43.4) (2026-11-19)
 
 
