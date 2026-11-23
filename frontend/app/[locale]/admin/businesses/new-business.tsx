@@ -3,22 +3,20 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useId, useRef, useState } from "react";
 
-import { Link, useRouter } from "@/i18n/navigation";
+import { Link } from "@/i18n/navigation";
 import { adminCreateBusiness } from "@/api-client";
 import { byName, type Country, likelyCountry, signUpRequest } from "@/lib/account";
 import type { Locale } from "@/lib/locale";
 
-import { Banner, EmailField, Heading, problem, Screen, send, Submit } from "../../../_ui/parts";
-import styles from "../../../_ui/ui.module.css";
-import { BackLink } from "../../parts";
-import { useSecondFactorRecheck } from "../../recheck";
+import { Banner, EmailField, Heading, problem, Screen, send, Submit } from "../../_ui/parts";
+import styles from "../../_ui/ui.module.css";
+import { useSecondFactorRecheck } from "../recheck";
 
-export function NewBusiness() {
+export function NewBusiness({ onCancel }: { onCancel(): void }) {
   const t = useTranslations("Admin");
   const signup = useTranslations("CompleteSignUp");
   const form = useTranslations("Form");
   const locale = useLocale() as Locale;
-  const router = useRouter();
   const id = useId();
   const emailInput = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -31,7 +29,7 @@ export function NewBusiness() {
   const recheck = useSecondFactorRecheck({
     titleId: id,
     cancelLabel: t("billing.cancel"),
-    onCancel: () => router.push("/admin/businesses"),
+    onCancel,
     async attempt() {
       setMessage(undefined);
       setEmailError(undefined);
@@ -74,7 +72,7 @@ export function NewBusiness() {
 
   return (
     <Screen>
-      <BackLink href="/admin/businesses">{t("businessesTitle")}</BackLink>
+      <button className={styles.textButton} type="button" onClick={onCancel}>{t("businessesTitle")}</button>
       <Heading>{t("createBusiness.title")}</Heading>
       <p className={styles.lede}>{t("createBusiness.lede")}</p>
       {recheck.banners}
