@@ -473,7 +473,7 @@ function ServiceFormBody(props: Props) {
   const [stripeReady, setStripeReady] = useState<boolean | null>(null);
   const deposits = hasFeature(entitlements, "deposits");
   const online = hasFeature(entitlements, "online_payments") && settings.payment_check && stripeReady === true;
-  const onlineKnown = !settings.payment_check || stripeReady !== null;
+  const onlineKnown = entitlements !== undefined && (!hasFeature(entitlements, "online_payments") || !settings.payment_check || stripeReady !== null);
   const ruleView = paymentRuleView(paymentRule, online, deposits);
   const [photo, setPhoto] = useState<PhotoField>({ kind: "saved" });
   const [photoError, setPhotoError] = useState<PhotoError | null>(null);

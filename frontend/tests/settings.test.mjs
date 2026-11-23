@@ -506,7 +506,6 @@ describe("ZIF-99 the message a refused address shows", () => {
   });
 });
 
-
 describe("plan-gated settings (ZIF-298)", () => {
   const gated = ["payment_check", "workers_edit_own_hours", "workers_answer_requests"];
   test("unknown or missing flags never enable gated settings; ordinary settings stay editable", () => {

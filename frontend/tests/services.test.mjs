@@ -266,7 +266,6 @@ describe("how clients pay (ZIF-62)", () => {
   });
 });
 
-
 describe("deposit entitlements (ZIF-298)", () => {
   test("online payments alone do not enable deposit or prepayment choices", () => {
     for (const rule of ["in_person", "choice", "deposit", "prepaid"]) {

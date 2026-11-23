@@ -29,12 +29,14 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   const busyRef = useRef(false);
   const owner = session.role === "owner";
   const available = hasFeature(entitlements, "online_payments");
+  const planLoading = entitlements === undefined;
 
   // Stripe sends the owner back with ?stripe=return (read the state again) or ?stripe=refresh (the
   // link expired: fetch a fresh one); either way the param goes once handled. Read at mount, before the
   // effect drops it, so a second run of the effect still knows.
   const [back] = useState(() => new URLSearchParams(window.location.search).get("stripe"));
   useEffect(() => {
+    if (planLoading) return;
     if (back) {
       // Only `stripe` goes: the tab stays the one the address opened (Settings owns ?tab).
       const url = new URL(window.location.href);
@@ -53,8 +55,8 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once on load
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once the plan read settles, so a refresh can reconnect
+  }, [planLoading]);
 
   async function dashboard() {
     setFailed(false);

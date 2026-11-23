@@ -673,7 +673,6 @@ describe("a booking row's second line, shared by the calendar's phone list and T
   });
 });
 
-
 test("a worker cannot answer a request when the plan lacks worker permissions (ZIF-298)", () => {
   const detail = { status: "pending", expired: false, starts_at: "2026-09-30T12:00:00Z" };
   for (const entitlements of [null, { values: { worker_permissions: false } }]) {

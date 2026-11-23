@@ -3,11 +3,18 @@ import type { EntitlementsOut, PlanOption } from "@/api-client";
 
 import { formatMoney } from "./money.ts";
 
-export type FeatureAccess = Pick<EntitlementsOut, "values"> | null;
+export type FeatureAccess = Pick<EntitlementsOut, "values"> | null | undefined;
 
 /** Unknown plan details never enable a gated control. Counts are not feature flags. */
 export function hasFeature(entitlements: FeatureAccess, feature: string): boolean {
   return entitlements?.values[feature] === true;
+}
+
+/** Loading is quiet; only a failed read asks for a reload. */
+export function featureNotice(entitlements: FeatureAccess, feature: string): "unavailable" | "upgrade" | null {
+  if (entitlements === undefined) return null;
+  if (entitlements === null) return "unavailable";
+  return hasFeature(entitlements, feature) ? null : "upgrade";
 }
 
 /** Whole days until `until`, rounded up, never negative. */

@@ -20,7 +20,7 @@ import {
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { bannerFor, hasFeature } from "@/lib/billing";
+import { bannerFor, featureNotice } from "@/lib/billing";
 import { allowed, canAnswerRequests, dateLocale, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { forgetPick, type Locale, pickedHere, resolveLocale } from "@/lib/locale";
 import { badgeText } from "@/lib/today";
@@ -54,9 +54,9 @@ type ConsoleContextValue = {
    * after it loads and after each answer, so the badge follows what the page shows. */
   pendingCount: number | null;
   setPendingCount: Dispatch<SetStateAction<number | null>>;
-  /** The business's plan and what it allows (ZIF-79), read once with the session. `null` until that read
-   * lands, and for good if it failed: no banner, never a failed console. */
-  entitlements: EntitlementsOut | null;
+  /** The business's plan and what it allows: undefined while loading, null if the read failed.
+   * A failed read leaves the console usable, with gated controls unavailable. */
+  entitlements: EntitlementsOut | null | undefined;
   /** Reads the plan again (after Checkout, or when a screen knows it changed). A failed read keeps what is shown. */
   reloadEntitlements(): Promise<void>;
   /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
@@ -281,8 +281,9 @@ function PlanBanner({ entitlements, owner, timeZone, locale }: { entitlements: E
 export function FeatureNote({ feature }: { feature: string }) {
   const { entitlements, session } = useConsole();
   const t = useTranslations("Console.planLimit");
-  if (!entitlements) return <Banner tone="note">{t("unavailable")}</Banner>;
-  if (hasFeature(entitlements, feature)) return null;
+  const notice = featureNotice(entitlements, feature);
+  if (!notice) return null;
+  if (notice === "unavailable") return <Banner tone="note">{t("unavailable")}</Banner>;
   return <PlanLimitNote feature={feature} owner={session.role === "owner"} />;
 }
 
@@ -458,7 +459,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [version, setVersion] = useState<AppVersion | null>(null);
-  const [entitlements, setEntitlements] = useState<EntitlementsOut | null>(null);
+  const [entitlements, setEntitlements] = useState<EntitlementsOut | null | undefined>(undefined);
   // The feature a 402 plan_limit named on this page, for the upgrade message; a new page starts clean.
   const [planLimit, setPlanLimit] = useState<{ feature: string; n: number } | null>(null);
   const [planLimitPath, setPlanLimitPath] = useState(pathname);
@@ -501,7 +502,7 @@ export function Shell({ children }: { children: ReactNode }) {
           if (!cancelled && rows) setPendingCount((current) => current ?? rows.length);
         });
         send(billingReadEntitlements()).then((plan) => {
-          if (!cancelled && plan.status === 200 && plan.data) setEntitlements(plan.data);
+          if (!cancelled) setEntitlements(plan.status === 200 && plan.data ? plan.data : null);
         });
       }
     });
@@ -537,6 +538,7 @@ export function Shell({ children }: { children: ReactNode }) {
   async function reloadEntitlements() {
     const outcome = await send(billingReadEntitlements());
     if (outcome.status === 200 && outcome.data) setEntitlements(outcome.data);
+    else setEntitlements((current) => current ?? null);
   }
 
   /** Every answer passes here, so a 402 plan_limit gets its upgrade message wherever it comes from. */
@@ -586,8 +588,10 @@ export function Shell({ children }: { children: ReactNode }) {
       return;
     }
     setSession(named);
-    if (outcome.status === 200 && outcome.data) setSettings(outcome.data);
-    else setFailure(problem(outcome));
+    if (outcome.status === 200 && outcome.data) {
+      setSettings(outcome.data);
+      void reloadEntitlements();
+    } else setFailure(problem(outcome));
   }
 
   async function onSignOut(everywhere: boolean) {
