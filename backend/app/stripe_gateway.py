@@ -94,6 +94,29 @@ class RefundState:
 
 
 @dataclass(frozen=True)
+class PriceInfo:
+    """A Price on the platform account, as the plan editor checks it."""
+
+    active: bool
+    recurring: bool  # retrieve_price: recurring at a fixed quantity (licensed), not metered
+    currency: str
+    unit_amount: int | None
+    interval: str | None  # month, year...; None for a one-off Price
+
+
+@dataclass(frozen=True)
+class CouponInfo:
+    """A coupon on the platform account, as an offer checks it."""
+
+    valid: bool  # false once deleted, expired or used up
+    percent_off: float | None
+    amount_off: int | None
+    duration: str  # once, repeating, forever
+    duration_in_months: int | None
+    currency: str | None  # an amount-off coupon's; None for percent-off
+
+
+@dataclass(frozen=True)
 class Event:
     id: str
     type: str
@@ -426,6 +449,39 @@ class Gateway:
             return client.v1.payment_intents.retrieve(intent_id, {}, options).status
 
         return self._call("cancel_intent", call, account)
+
+    def retrieve_price(self, price_id: str) -> PriceInfo:
+        """A Price on the platform account (no stripe_account): plans are sold by ziftbook."""
+
+        def call(client: stripe.StripeClient) -> PriceInfo:
+            got = client.v1.prices.retrieve(price_id)
+            recurring = got.recurring
+            return PriceInfo(
+                got.active,
+                # Metered is billed on reported usage, which Checkout's quantity of 1 never sells.
+                recurring is not None and recurring.usage_type == "licensed",
+                got.currency,
+                got.unit_amount,
+                recurring.interval if recurring is not None else None,
+            )
+
+        return self._call("retrieve_price", call)
+
+    def retrieve_coupon(self, coupon_id: str) -> CouponInfo:
+        """A coupon on the platform account. A deleted one is a 404: Failed("invalid")."""
+
+        def call(client: stripe.StripeClient) -> CouponInfo:
+            got = client.v1.coupons.retrieve(coupon_id)
+            return CouponInfo(
+                got.valid,
+                got.percent_off,
+                got.amount_off,
+                got.duration,
+                got.duration_in_months,
+                got.currency,
+            )
+
+        return self._call("retrieve_coupon", call)
 
     def construct_event(self, body: bytes, header: str | None) -> Event:
         """The event, once Stripe's signature over these exact bytes checks out."""

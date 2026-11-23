@@ -11,6 +11,9 @@ const read = (path) => readFileSync(new URL(`../app/[locale]/admin/${path}`, imp
 const list = read("businesses/businesses.tsx");
 const detail = read("businesses/[id]/business.tsx");
 const suspension = read("businesses/[id]/suspension.tsx");
+// The second-factor re-check moved to a hook shared with the billing writes (ZIF-78); its phases are tested in admin-write.test.mjs.
+const recheck = read("recheck.tsx");
+const phases = readFileSync(new URL("../lib/admin-write.ts", import.meta.url), "utf8");
 const signInForm = readFileSync(new URL("../app/[locale]/sign-in/sign-in-form.tsx", import.meta.url), "utf8");
 
 describe("signed out or short of the second factor", () => {
@@ -83,7 +86,7 @@ const NEW_KEYS = [
 describe("copy", () => {
   // ZIF-73 fence. Kills: a key the screens use missing in a language (check-catalogs compares the catalogs with each
   // other, not with the code).
-  const keys = [...new Set([...`${list}\n${detail}\n${suspension}`.matchAll(/\bt\("([A-Za-z.]+)"/g)].map((match) => match[1]))];
+  const keys = [...new Set([...`${list}\n${detail}\n${suspension}\n${recheck}`.matchAll(/\bt\("([A-Za-z.]+)"/g)].map((match) => match[1]))];
   for (const locale of ["en", "nl", "pt"]) {
     test(`every key the screens use is in ${locale}`, () => {
       const { Admin, SignIn } = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"));
@@ -131,11 +134,11 @@ describe("a write's answer (writeStep)", () => {
 describe("what the suspension screens read", () => {
   // ZIF-73 fences F6, F3b. Kills: the re-check bypassed (needsSignIn on a write), a write's 204 read as data.
   test("the panel sends through writeStep and the code form, never needsSignIn, never a body", () => {
-    assert.match(suspension, /writeStep\(/);
-    assert.match(suspension, /adminPassSecondFactor\(/);
-    assert.doesNotMatch(suspension, /needsSignIn\(/);
-    assert.match(suspension, /writeStep\(\w+\.status, \w+\.code\)/);
-    assert.doesNotMatch(suspension, /\.data\b/);
+    assert.match(suspension, /useSecondFactorRecheck\(/);
+    assert.match(phases, /writeStep\(event\.status, event\.code\)/);
+    assert.match(recheck, /adminPassSecondFactor\(/);
+    assert.doesNotMatch(`${suspension}${recheck}${phases}`, /needsSignIn\(/);
+    assert.doesNotMatch(`${suspension}${recheck}`, /\.data\b/);
   });
 
   // ZIF-73 fences F6, F6b. Kills: no refetch after a change, browser-zone times, "[object Object]" for a service,
@@ -167,7 +170,8 @@ describe("what the suspension screens read", () => {
 describe("suspension and refresh", () => {
   // ZIF-73 fence. Kills: a used code left in state, the resend dropped, or the resend wrapped in the guarded no-op.
   test("a passed code is cleared, the form returns to the reason and the write is sent again", () => {
-    assert.match(suspension, /outcome\.status === 200\) \{\s*setCode\(""\)[^\n]*\n\s*setPhase\("reason"\);\s*await attempt\(\);/);
+    assert.match(phases, /event\.status === 200\) return \{ state: \{ \.\.\.state, phase: "reason" \}, then: "resend" \}/);
+    assert.match(recheck, /then === "resend"\) \{\s*setCode\(""\)[^\n]*\n\s*await sendWrite\(\);/);
   });
 
   // ZIF-73 fence. Kills: the detail never read back after a change (the refetch counter not bumped), and the action
@@ -185,9 +189,9 @@ describe("suspension and refresh", () => {
 
   // ZIF-73 fence. Kills: the lock notice kept in `message`, which the next submit or the resend clears.
   test("the lock notice renders from the blocked state", () => {
-    assert.match(suspension, /blocked === "locked" && <Banner tone="error">\{t\("locked"\)\}/);
-    assert.match(suspension, /blocked === "unavailable" && <Banner tone="note">\{t\("appUnavailable"\)\}/);
-    assert.doesNotMatch(suspension, /setMessage\([^\n]*t\("(locked|appUnavailable)"\)/);
+    assert.match(recheck, /blocked === "locked" && <Banner tone="error">\{t\("locked"\)\}/);
+    assert.match(recheck, /blocked === "unavailable" && <Banner tone="note">\{t\("appUnavailable"\)\}/);
+    assert.doesNotMatch(`${suspension}${recheck}`, /set(Message|Notice)\([^\n]*t\("(locked|appUnavailable)"\)/);
   });
 
   // ZIF-73 fence. Kills: a failed read-back after a change blanking the business the admin was looking at.
@@ -201,8 +205,9 @@ describe("suspension and refresh", () => {
   // ZIF-73 fence. Kills: a code surviving Cancel, the kind switched mid-check, and the lock path going through the
   // busy-gated switch (a no-op inside the chain, so the kind would stay "app").
   test("cancel, the switch and the lock path leave no stale code or kind", () => {
-    assert.match(suspension, /function cancel\(\) \{[^}]*setCode\(""\);\s*setCodeError\(undefined\);/);
-    assert.match(suspension, /function switchTo[^{]*\{\s*if \(busy\) return;/);
-    assert.match(suspension, /setBlocked\(state\);\s*setKind\("recovery"\);/);
+    assert.match(suspension, /function cancel\(\) \{[^}]*recheck\.reset\(\);/);
+    assert.match(recheck, /reset\(\) \{[\s\S]*?setCode\(""\);\s*setCodeError\(undefined\);/);
+    assert.match(recheck, /function switchTo[^{]*\{\s*if \(busy\) return;/);
+    assert.match(phases, /blocked: answer, kind: "recovery"/);
   });
 });

@@ -52,6 +52,9 @@ export function AdminHome() {
           <Link className={`${styles.button} ${styles.primary}`} href="/admin/businesses">
             {t("businessesTitle")}
           </Link>
+          <Link className={`${styles.button} ${styles.secondary}`} href="/admin/plans">
+            {t("plans.title")}
+          </Link>
           {signOutFailure && <Banner tone="error">{signOutFailure}</Banner>}
           <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={leave}>
             {t("signOut")}

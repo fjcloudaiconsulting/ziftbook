@@ -70,6 +70,7 @@ PAGES = (
     "/[locale]/admin",
     "/[locale]/admin/businesses",
     "/[locale]/admin/businesses/[id]",
+    "/[locale]/admin/plans",
     "/[locale]/admin/sign-in",
     "/[locale]/booking",
     "/[locale]/calendar",

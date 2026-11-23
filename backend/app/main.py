@@ -29,6 +29,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app import (
     accounts,
     admin_auth,
+    admin_billing,  # noqa: F401  its routes are on admin_auth's routers
     admin_businesses,  # noqa: F401  its routes are on admin_auth.admin_router
     audit,
     auth,
@@ -584,6 +585,7 @@ def create_app() -> FastAPI:
             total=error.total,
             feature=error.feature,
             limit=error.limit,
+            key=error.key,
         ).model_dump(mode="json", exclude_none=True)
         if error.feature is not None:  # ZIF-78: a flag's 402 says "limit": null, not nothing
             body["limit"] = error.limit

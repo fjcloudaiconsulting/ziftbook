@@ -24,6 +24,7 @@ from app import logs
 from app.db import tenant_context
 from app.stripe_gateway import (
     Account,
+    CouponInfo,
     Failed,
     FeesCollector,
     Gateway,
@@ -31,6 +32,7 @@ from app.stripe_gateway import (
     IntentState,
     Kind,
     Mode,
+    PriceInfo,
     RefundState,
 )
 
@@ -77,6 +79,9 @@ class FakeGateway(Gateway):
         # Runs once a refund is made, before the caller has its answer.
         self.after_refund: Callable[[], None] | None = None
         self.refund_params: dict[str, int] = {}
+        # The platform account's Prices and coupons, by id: an id not here is Stripe's 404.
+        self.prices: dict[str, PriceInfo] = {}
+        self.coupons: dict[str, CouponInfo] = {}
 
     @contextmanager
     def _keyed(self, key: str) -> Iterator[None]:
@@ -164,6 +169,18 @@ class FakeGateway(Gateway):
         self._enter("register_domain", account=account, host=host)
         if host not in self.accounts[account]["domains"]:
             self.accounts[account]["domains"].append(host)
+
+    def retrieve_price(self, price_id: str) -> PriceInfo:
+        self._enter("retrieve_price", price_id=price_id)
+        if price_id not in self.prices:
+            raise Failed("invalid", "req_fake")
+        return self.prices[price_id]
+
+    def retrieve_coupon(self, coupon_id: str) -> CouponInfo:
+        self._enter("retrieve_coupon", coupon_id=coupon_id)
+        if coupon_id not in self.coupons:
+            raise Failed("invalid", "req_fake")
+        return self.coupons[coupon_id]
 
     def create_check(
         self,

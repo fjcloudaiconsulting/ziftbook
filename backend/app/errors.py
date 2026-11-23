@@ -44,6 +44,8 @@ class Error(BaseModel):
     # for a flag. The handler keeps limit's null whenever feature is set.
     feature: str | None = None
     limit: int | None = None
+    # Only invalid_values sets it (ZIF-78, admin plan and override writes): the key refused.
+    key: str | None = None
 
 
 class ApiError(Exception):
@@ -57,6 +59,7 @@ class ApiError(Exception):
         total: int | None = None,
         feature: str | None = None,
         limit: int | None = None,
+        key: str | None = None,
         headers: dict[str, str] | None = None,
     ) -> None:
         self.status_code = status_code
@@ -68,3 +71,4 @@ class ApiError(Exception):
         self.total = total
         self.feature = feature
         self.limit = limit
+        self.key = key

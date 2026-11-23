@@ -220,6 +220,17 @@ USERS_POLICIES = [
 DEFINERS = [
     "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
     "public.account_by_email(p_email text)",
+    # ZIF-78 (0106): keyed by an admin session with a fresh second factor; write plans, the billing
+    # settings and one business's overrides, offers and grant; read no user.
+    "public.admin_archive_plan(p_id_hash bytea, p_id uuid)",
+    "public.admin_end_grant(p_id_hash bytea, p_tenant uuid)",
+    "public.admin_grant_plan(p_id_hash bytea, p_tenant uuid, p_plan uuid, p_ends timestamp with time zone, p_reason text)",  # noqa: E501
+    "public.admin_offer_plan(p_id_hash bytea, p_tenant uuid, p_plan uuid, p_coupon text, p_reason text)",  # noqa: E501
+    "public.admin_remove_override(p_id_hash bytea, p_tenant uuid, p_key text)",
+    "public.admin_save_plan(p_id_hash bytea, p_id uuid, p_slug text, p_name jsonb, p_price text, p_values jsonb, p_public boolean)",  # noqa: E501
+    "public.admin_set_billing(p_id_hash bytea, p_default uuid, p_trial uuid, p_days integer)",
+    "public.admin_set_override(p_id_hash bytea, p_tenant uuid, p_key text, p_value jsonb, p_expires timestamp with time zone, p_reason text)",  # noqa: E501
+    "public.admin_withdraw_offer(p_id_hash bytea, p_tenant uuid, p_plan uuid)",
     "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
     "public.cancel_contact_email()",
     "public.change_contact_email(p_email text, p_send boolean, p_requester uuid)",

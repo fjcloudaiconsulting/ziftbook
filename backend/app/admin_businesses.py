@@ -251,15 +251,18 @@ def read_business(tenant_id: UUID, current: CurrentAdmin, request: Request) -> B
     )
 
 
+# As services.DescriptionText: stripped, never blank, no control characters (a NUL would be a 500
+# from the database), and the CHECK's 500.
+ReasonText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+    AfterValidator(services.multiline),
+]
+
+
 class Reason(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
-    # As services.DescriptionText: stripped, never blank, no control characters (a NUL would be a
-    # 500 from the database), and the CHECK's 500.
-    reason: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
-        AfterValidator(services.multiline),
-    ]
+    reason: ReasonText
 
 
 # What each function answers other than its success, as the error it becomes.

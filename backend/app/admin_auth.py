@@ -560,6 +560,7 @@ def business(
     target: str,
     action: admin.Action = "business_read",
     reason: str | None = None,
+    details: dict[str, object] | None = None,
 ) -> Iterator[Session]:
     """One business's data, for an admin read or write: a tenant_context, with it recorded first.
 
@@ -579,6 +580,7 @@ def business(
             tenant_id=tenant_id,
             target=target,
             reason=reason,
+            details=details,
         )
         request.state.tenant_id = tenant_id
         yield session

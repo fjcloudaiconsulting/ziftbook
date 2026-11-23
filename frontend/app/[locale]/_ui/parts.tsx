@@ -14,8 +14,8 @@ import styles from "./ui.module.css";
 /** What an API call came back with: status 0 means the request never got an answer.
  * `weekday`: only `outside_opening_hours` carries it (`errors.py`), so the working-hours
  * screen can name the day the server refused. `bookings` and `total`: only `overlaps_bookings`
- * (ZIF-130), the appointments a time-off block would cover. */
-export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; data?: T };
+ * (ZIF-130), the appointments a time-off block would cover. `key`: only `invalid_values` (ZIF-78), the feature refused. */
+export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; key?: string; data?: T };
 
 // The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a
 // request with no body: these DELETEs send an empty JSON object.
@@ -31,6 +31,7 @@ export async function send<T>(request: Promise<{ data?: T; error?: unknown; resp
       weekday: body?.weekday ?? undefined,
       bookings: body?.bookings ?? undefined,
       total: body?.total ?? undefined,
+      key: body?.key ?? undefined,
       data,
     };
   } catch {
