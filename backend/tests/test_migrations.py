@@ -1334,7 +1334,7 @@ PAYMENT_CHECKS: list[tuple[str, dict[str, Any]]] = [
     ("ck_booking_payments_fee_mode", {"fee_mode": "x"}),
     ("ck_booking_payments_application_fee_minor", {"application_fee_minor": -1}),
     ("ck_booking_payments_stripe_fee_minor", {"stripe_fee_minor": 2501}),
-    ("ck_booking_payments_fee_needs_mode_2", {"application_fee_minor": 5}),
+    ("ck_booking_payments_fee_only_on_pay", {"application_fee_minor": 5}),
     ("ck_booking_payments_status", {"status": "x"}),
     (
         "ck_booking_payments_refunded_minor",
@@ -3476,3 +3476,36 @@ def test_0105_round_trips_account_by_email(
         True,
         ["search_path=pg_catalog, public, pg_temp"],
     )
+
+
+FEE_CHECKS = text("""
+SELECT conname, convalidated FROM pg_constraint
+WHERE conname IN ('ck_payment_accounts_fee_only_in_mode_2', 'ck_booking_payments_fee_needs_mode_2',
+                  'ck_booking_payments_fee_only_on_pay')
+ORDER BY conname
+""")
+
+
+# ZIF-80 FENCE. Kills: a 0107 that keeps either mode-2 check (no fee under business_pays) or drops
+# the card check's no-fee rule with them; a downgrade that cannot run once a fee row exists (the
+# old checks re-added validated).
+def test_0107_round_trips_the_fee_checks(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    paid = _seed_booking(people, migrate_engine)
+    fee_row = {**GOOD_PAYMENT, "kind": "pay", "intent_id": "pi_fee", "application_fee_minor": 60}
+    _insert_payment(migrate_engine, people, paid, fee_row)
+    try:
+        command.downgrade(cfg, "0106")
+        with migrate_engine.connect() as conn:
+            assert [tuple(r) for r in conn.execute(FEE_CHECKS)] == [
+                ("ck_booking_payments_fee_needs_mode_2", False),
+                ("ck_payment_accounts_fee_only_in_mode_2", False),
+            ]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert [tuple(r) for r in conn.execute(FEE_CHECKS)] == [
+            ("ck_booking_payments_fee_only_on_pay", False)
+        ]

@@ -441,6 +441,7 @@ def test_a_suspended_business_lists_its_upcoming_confirmed_bookings_only(
         "currency": "EUR",
         "refunded_minor": 0,
         "refund_failed": False,
+        "fees": None,
     }
     assert all(str(booking) not in json.dumps(body) for booking in ids)
 

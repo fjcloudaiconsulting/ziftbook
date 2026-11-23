@@ -983,6 +983,7 @@ def test_the_queue_says_which_requests_are_paid(
         "currency": currency,
         "refunded_minor": 0,
         "refund_failed": False,
+        "fees": {"stripe_fee_minor": None, "application_fee_minor": 0, "net_minor": None},
     }
     assert (queue[checked]["payment"]["kind"], queue[checked]["payment"]["status"]) == (
         "check",

@@ -139,16 +139,10 @@ def test_the_fee_payer_is_fixed_with_the_account(
                 "application_fee_bp = 150"
             )
         )
-    # Mode 2 carries the fee; mode 1 with a fee is refused.
-    assert refused(
-        migrate_engine, people.a, "UPDATE payment_accounts SET fee_mode = 'business_pays'"
-    ) == ("23514", "ck_payment_accounts_fee_only_in_mode_2")
-    # Modes 1 and 2 switch freely.
+    # Modes 1 and 2 switch freely (ZIF-80: the account's fee columns are no longer read, 0107).
     with migrate_engine.begin() as conn:
         scoped(conn, people.a)
-        conn.execute(
-            text("UPDATE payment_accounts SET fee_mode = 'business_pays', application_fee_bp = 0")
-        )
+        conn.execute(text("UPDATE payment_accounts SET fee_mode = 'business_pays'"))
 
     insert(app_engine, people.b, unique_account(), fee_mode="platform_pays")
     assert (

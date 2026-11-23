@@ -88,6 +88,9 @@ class PaymentAccountOut(BaseModel):
     currency_supported: bool
     min_amount_minor: int | None
     currency: str
+    country: str  # ZIF-80: where Stripe's own pricing page for the business is
+    platform_fee_direct: int  # ZIF-80: the plan's fees, basis points
+    platform_fee_marketplace: int
 
 
 class ConnectIn(BaseModel):
@@ -150,14 +153,14 @@ def effective_rule(db: Session, rule: str) -> str:
 
 
 def rule_for(
-    account: str | None, rule: str, pct: int | None, amount_minor: int, currency: str
+    account: str | None, rule: str, pct: int | None, amount_minor: int, currency: str, source: str
 ) -> bookings.PaymentStep | None:
     """A service's payment step, or None (no step, fail open): offer()'s conditions (account is
     available()'s answer, so the page reads it once for every service) and a rule paid online. One
     function for the booking page and the booking create; a resume reads the booking's snapshot."""
     if account is None or rule not in bookings.KINDS or not meets_minimum(amount_minor, currency):
         return None
-    return bookings.PaymentStep(account, rule, due(rule, pct, amount_minor, currency))
+    return bookings.PaymentStep(account, rule, due(rule, pct, amount_minor, currency), source)
 
 
 def refresh_account(tenant_id: object) -> None:
@@ -295,12 +298,17 @@ def read_account(seen: AnyMember, response: Response) -> PaymentAccountOut:
                                 {"account": seen.account},
                             )
             state = "ready" if enabled else "onboarding"
+        with tenant_context(seen.tenant_id) as db:
+            plan = entitlements(db)
         return PaymentAccountOut(
             state=state,
             country_supported=bool(STRIPE_CURRENCIES.get(seen.country)),
             currency_supported=seen.currency in STRIPE_CURRENCIES.get(seen.country, frozenset()),
             min_amount_minor=MIN_CHARGE.get(seen.currency),
             currency=seen.currency,
+            country=seen.country,
+            platform_fee_direct=plan.count("platform_fee_direct"),
+            platform_fee_marketplace=plan.count("platform_fee_marketplace"),
         )
 
 
@@ -517,9 +525,8 @@ SELECT current_setting('app.tenant_id')::uuid, :booking_id, :kind, :intent_id, :
 FROM payment_accounts
 RETURNING 1
 """)
-POLICY = text("""
-SELECT fee_mode, application_fee_bp, application_fee_fixed_minor FROM payment_accounts
-""")
+# ZIF-80: the fee itself comes from the plan; payment_accounts' fee columns are no longer read.
+POLICY = text("SELECT fee_mode FROM payment_accounts")
 # D2: money still owed an answer, re-armed every hour whatever happened to earlier jobs.
 UNSETTLED = text(f"""
 SELECT DISTINCT b.id, b.status FROM booking_payments p
@@ -612,11 +619,10 @@ def _landed(state: stripe_gateway.IntentState, kind: str) -> bool:
     return state.status == ("requires_capture" if held else "succeeded")
 
 
-def application_fee(mode: str, bp: int, fixed: int, amount_minor: int) -> int:
-    """D6: ziftbook's fee on one payment. Only mode 2 has one; never more than the payment."""
-    if mode != "business_pays_plus_fee":
-        return 0
-    return min(amount_minor, round(amount_minor * bp / 10000) + fixed)
+def application_fee(bp: int, amount_minor: int) -> int:
+    """ZIF-80: ziftbook's fee on a payment, the plan's basis points rounded half up (integers only);
+    never more than the payment."""
+    return min(amount_minor, (amount_minor * bp + 5000) // 10000)
 
 
 def refund_due(amount_minor: int, pct: int, ending: str, fee: int | None) -> int | None:
@@ -630,17 +636,29 @@ def refund_due(amount_minor: int, pct: int, ending: str, fee: int | None) -> int
 
 
 def _create(
-    kind: str, account: str, tenant_id: UUID, booking_id: UUID, amount: int, currency: str, n: int
+    kind: str,
+    account: str,
+    tenant_id: UUID,
+    booking_id: UUID,
+    amount: int,
+    currency: str,
+    n: int,
+    source: str,
 ) -> tuple[stripe_gateway.Intent, int, str]:
     """The intent for a check or a payment, with the fee policy it was made under: the application
-    fee and the account's fee mode, read once for both the intent and its row."""
+    fee (ZIF-80: the plan's fee for the booking's source) and the account's fee mode, read once for
+    both the intent and its row."""
     gateway = stripe_gateway.gateway
     # The kind is part of the key: Stripe refuses a key reused with other parameters, so a retry
     # after the other kind's create timed out must not meet it.
     key = f"pi:{booking_id}:{n}:{kind}"
     with tenant_context(tenant_id) as db:  # closed before Stripe is called
         policy = db.execute(POLICY).first()
+        plan = entitlements(db)
     mode = "business_pays" if policy is None else policy.fee_mode  # no account: the insert refuses
+    bp = plan.count(
+        "platform_fee_marketplace" if source == "marketplace" else "platform_fee_direct"
+    )
     if kind == "check":
         made = gateway.create_check(
             account,
@@ -652,11 +670,7 @@ def _create(
             idempotency_key=key,
         )
         return made, 0, mode
-    fee = 0
-    if policy is not None:
-        fee = application_fee(
-            mode, policy.application_fee_bp, policy.application_fee_fixed_minor, amount
-        )
+    fee = application_fee(bp, amount)
     made = gateway.create_payment(
         account,
         tenant_id=str(tenant_id),
@@ -709,6 +723,7 @@ def start(
                 step.due_minor,
                 booking.price.currency,
                 1,
+                step.source,
             )
         except stripe_gateway.Failed as failure:
             logger.warning(
@@ -1040,10 +1055,9 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 row.account,
                 row.intent_id,
                 due - state.amount_refunded,
-                # D6 mode 2: ziftbook's fee goes back to the business when it (or we) ended it.
-                refund_application_fee=(
-                    row.ending != "cancelled_by_client" if row.application_fee_minor > 0 else None
-                ),
+                # ZIF-80: ziftbook's fee goes back with the money, in proportion (Stripe's rule for
+                # a direct charge), however the booking ended: no fee on money the business returns.
+                refund_application_fee=True if row.application_fee_minor > 0 else None,
                 # One key per payment, never per amount: two overlapping runs that read different
                 # amounts would both be paid. The cost: a hand refund after an attempt Stripe kept
                 # under the key makes the retry an idempotency error, flagged for the business.
@@ -1233,7 +1247,8 @@ SELECT b.id,
        b.starts_at, b.ends_at, b.duration_minutes, b.service_name,
        b.price_amount_minor, b.price_currency, b.worker_id, b.worker_display_name,
        b.cancellation_policy_text, b.expires_at, b.checkout_hash, b.payment_rule,
-       b.payment_due_minor, (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live
+       b.payment_due_minor, (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live,
+       b.source
 FROM bookings b WHERE b.id = :id AND b.source = 'booking_page'
 """)
 LIVE_BOOKING = text("""
@@ -1406,6 +1421,7 @@ def resume(
                 booking.payment_due_minor,  # as start()'s: a check's is the full price
                 booking.price_currency,
                 payment.n + 1,
+                booking.source,
             )
         except stripe_gateway.Failed:
             raise _unavailable() from None

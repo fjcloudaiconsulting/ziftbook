@@ -6,7 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type PaymentAccountOut, paymentsAccount, paymentsConnect } from "@/api-client";
 import { currencyName } from "@/lib/currency";
 import { formatMoney } from "@/lib/money";
-import { connectError, paymentsAction, withoutStripe } from "@/lib/settings";
+import { connectError, paymentsAction, percentOf, stripePricingUrl, withoutStripe } from "@/lib/settings";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
@@ -114,6 +114,21 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       )}
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
+      {/* ZIF-80: the plan's fees, and where Stripe's own are; no Stripe rate is copied here. */}
+      {account && account.state !== "off" && account.country_supported && (
+        <>
+          <p className={styles.body}>
+            {t("paymentsFees", { direct: percentOf(account.platform_fee_direct, locale), marketplace: percentOf(account.platform_fee_marketplace, locale) })}
+          </p>
+          <p className={styles.body}>
+            {t("paymentsStripeFee")}{" "}
+            <a href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
+              {t("paymentsStripePricing")}
+              <span className={uiStyles.srOnly}> {t("opensInNewTab")}</span>
+            </a>
+          </p>
+        </>
+      )}
       {(action === "connect" || action === "continue") && (
         <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go()}>
           {busy && <span className={uiStyles.spinner} aria-hidden="true" />}

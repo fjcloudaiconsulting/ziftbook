@@ -65,9 +65,19 @@ def test_what_a_payment_charges_under_each_rule(
 # ZIF-62 FENCE. Kills: a step for an in_person service, for a business that takes no payments, or
 # for a price under Stripe's minimum.
 def test_rule_for_is_offer_s_conditions_and_a_rule_paid_online() -> None:
-    assert payments.rule_for(None, "choice", None, 2500, "EUR") is None
-    assert payments.rule_for("acct_1", "in_person", None, 2500, "EUR") is None
-    assert payments.rule_for("acct_1", "deposit", 30, 49, "EUR") is None
-    assert payments.rule_for("acct_1", "deposit", 30, 2500, "BRL") is None
-    assert payments.rule_for("acct_1", "deposit", 30, 2500, "EUR") == ("acct_1", "deposit", 750)
-    assert payments.rule_for("acct_1", "choice", None, 50, "EUR") == ("acct_1", "choice", 50)
+    assert payments.rule_for(None, "choice", None, 2500, "EUR", "booking_page") is None
+    assert payments.rule_for("acct_1", "in_person", None, 2500, "EUR", "booking_page") is None
+    assert payments.rule_for("acct_1", "deposit", 30, 49, "EUR", "booking_page") is None
+    assert payments.rule_for("acct_1", "deposit", 30, 2500, "BRL", "booking_page") is None
+    assert payments.rule_for("acct_1", "deposit", 30, 2500, "EUR", "booking_page") == (
+        "acct_1",
+        "deposit",
+        750,
+        "booking_page",
+    )
+    assert payments.rule_for("acct_1", "choice", None, 50, "EUR", "booking_page") == (
+        "acct_1",
+        "choice",
+        50,
+        "booking_page",
+    )

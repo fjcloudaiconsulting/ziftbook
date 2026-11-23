@@ -84,6 +84,7 @@
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .facts a { color: var(--primary); }
+.feeList { margin: 0; padding: 0; list-style: none; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 .split > * { width: 100%; }
 .expiry { margin: 0; font-size: 0.875rem; color: var(--note-ink); }

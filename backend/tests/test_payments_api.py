@@ -67,6 +67,9 @@ def test_the_account_state_walks_off_none_onboarding_ready(
             "currency_supported": True,
             "min_amount_minor": 50,
             "currency": "EUR",
+            "country": "NL",
+            "platform_fee_direct": 0,
+            "platform_fee_marketplace": 0,
         },
     )
     assert none.headers["Cache-Control"] == "no-store"

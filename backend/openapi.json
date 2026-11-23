@@ -13181,6 +13181,18 @@
           "currency": {
             "type": "string",
             "title": "Currency"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "platform_fee_direct": {
+            "type": "integer",
+            "title": "Platform Fee Direct"
+          },
+          "platform_fee_marketplace": {
+            "type": "integer",
+            "title": "Platform Fee Marketplace"
           }
         },
         "type": "object",
@@ -13189,7 +13201,10 @@
           "country_supported",
           "currency_supported",
           "min_amount_minor",
-          "currency"
+          "currency",
+          "country",
+          "platform_fee_direct",
+          "platform_fee_marketplace"
         ],
         "title": "PaymentAccountOut"
       },
@@ -13228,6 +13243,16 @@
           "refund_failed": {
             "type": "boolean",
             "title": "Refund Failed"
+          },
+          "fees": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentFees"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -13237,9 +13262,48 @@
           "amount_minor",
           "currency",
           "refunded_minor",
-          "refund_failed"
+          "refund_failed",
+          "fees"
         ],
         "title": "PaymentFact"
+      },
+      "PaymentFees": {
+        "properties": {
+          "stripe_fee_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stripe Fee Minor"
+          },
+          "application_fee_minor": {
+            "type": "integer",
+            "title": "Application Fee Minor"
+          },
+          "net_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Minor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stripe_fee_minor",
+          "application_fee_minor",
+          "net_minor"
+        ],
+        "title": "PaymentFees",
+        "description": "ZIF-80: every fee on the charge. Stripe's is null until its balance transaction reports it,\nand so is what the business receives (the amount less both fees, before any refund)."
       },
       "PaymentStart": {
         "properties": {
