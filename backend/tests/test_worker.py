@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine, make_url, text
 
-from app import bookings, erasure_holds, jobs, logs, retention, worker
+from app import bookings, enforcement, erasure_holds, jobs, logs, retention, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
@@ -52,6 +52,7 @@ def _no_retention_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     the retention functions (ZIF-235): the sweep is stubbed, on purpose, except where a test
     replaces it itself."""
     monkeypatch.setattr(retention, "sweep", lambda *args, **kwargs: retention.Swept(complete=True))
+    monkeypatch.setattr(enforcement, "sweep", lambda: None)  # ZIF-78: not these tests' concern
 
 
 @pytest.fixture

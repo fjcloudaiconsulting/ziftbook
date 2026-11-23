@@ -69,6 +69,8 @@ def test_the_owner_lists_members_of_their_business(people: People, app: FastAPI)
                 "email": email_of(people.only_a),
                 "role": "worker",
                 "display_name": None,
+                "keeps_access": False,
+                "paused": False,
             },
             {
                 "member_id": str(member_id(people.a, people.both)),
@@ -76,6 +78,8 @@ def test_the_owner_lists_members_of_their_business(people: People, app: FastAPI)
                 "email": email_of(people.both),
                 "role": "owner",
                 "display_name": None,
+                "keeps_access": False,
+                "paused": False,
             },
             {
                 "member_id": str(member_id(people.a, people.only_b)),
@@ -83,6 +87,8 @@ def test_the_owner_lists_members_of_their_business(people: People, app: FastAPI)
                 "email": email_of(people.only_b),
                 "role": "worker",
                 "display_name": None,
+                "keeps_access": False,
+                "paused": False,
             },
         ],
         key=lambda m: str(m["member_id"]),
@@ -355,6 +361,8 @@ def test_setting_the_same_role_is_a_no_op(
         "email": email_of(people.only_a),
         "role": "worker",
         "display_name": None,
+        "keeps_access": False,
+        "paused": False,
     }
     assert worker_client.get("/api/session").status_code == 200
     assert events(migrate_engine, tenant_id=people.a, action="member_role_changed") == []

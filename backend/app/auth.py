@@ -59,12 +59,15 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
     # FOR SHARE: a sign-in racing a removal (target() holds the row FOR UPDATE) waits, then
     # re-reads the row; an ended one yields no row, so the caller's ValueError answers 403
     # no_tenant instead of a foreign key 500. The filter alone is not enough: an unlocked read sees
-    # the old row.
+    # the old row. ZIF-78: a membership paused past its plan's places starts none either; a sign-in
+    # racing the pause waits for it the same way.
     inserted = session.scalar(
         text("""
         INSERT INTO sessions (id_hash, tenant_id, user_id, role, expires_at, ip, user_agent)
         SELECT :id_hash, tenant_id, user_id, role, now() + :lifetime, :ip, :user_agent
-        FROM memberships WHERE user_id = :user_id AND role <> 'removed' FOR SHARE
+        FROM memberships
+        WHERE user_id = :user_id AND role <> 'removed' AND access_paused_at IS NULL
+        FOR SHARE
         RETURNING true
         """),
         {
@@ -104,6 +107,8 @@ Action = Literal[
     "member_role_changed",
     "member_removed",
     "member_display_name_changed",
+    # ZIF-78: an owner picks who keeps access while the business is over its places.
+    "member_keeps_access_changed",
     "user_name_set",
     "working_hours_changed",
     "opening_hours_changed",
@@ -351,10 +356,32 @@ def resolve(request: Request) -> Row[Any]:
     return row
 
 
+# ZIF-78: a membership paused past its plan's places. Here, not in RESOLVE: memberships is under
+# row-level security, and RESOLVE runs before the tenant is known. Deny by default: no row denies.
+LIVE_PLACE = text(
+    "SELECT access_paused_at IS NULL /* place gate */ FROM memberships"
+    " WHERE user_id = :u AND role <> 'removed'"
+)
+
+
+def live_place(current: SignedIn) -> None:
+    """401 while the session's membership is paused past its plan's places (ZIF-78): the session
+    stops resolving, and works again once the pause lifts, until the idle limit ends it as any
+    session (the pause also deletes it, enforcement.run). Read once per transaction: signed_in and
+    named both call it, and so does every route that resolves its session itself through named."""
+    if current.db.info.get("live_place"):
+        return
+    if current.db.scalar(LIVE_PLACE, {"u": current.user_id}) is not True:
+        raise ApiError(401, "unauthenticated")
+    current.db.info["live_place"] = True
+
+
 def signed_in(request: Request) -> Iterator[SignedIn]:
     row = resolve(request)
     with tenant_context(row.tenant_id) as db:
-        yield SignedIn(row.user_id, row.tenant_id, row.role, db)
+        current = SignedIn(row.user_id, row.tenant_id, row.role, db)
+        live_place(current)
+        yield current
 
 
 # scope="function": the endpoint's transaction commits before the response is sent, so a failed
@@ -365,6 +392,9 @@ AnySession = Annotated[SignedIn, Depends(signed_in, scope="function")]
 
 
 def named(current: AnySession) -> SignedIn:
+    # ZIF-78: first, so a route that builds its SignedIn from auth.resolve (photos, payments,
+    # services' Save) is gated too.
+    live_place(current)
     # Deny by default (ZIF-131): read on every request, so a name removed while a session is live
     # gates it at once, and anything but a definite True (no row, NULL) denies.
     if (
@@ -574,6 +604,11 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
         ):
             logger.info("sign-in refused: business suspended")  # tenant_context binds tenant_id
             raise ApiError(403, "business_suspended", headers=account_cookie_cleared())
+        # ZIF-78: past the password check, as the suspension, so it tells nothing more than a
+        # correct password already does. account_by_email puts paused memberships last too.
+        if session.scalar(LIVE_PLACE, {"u": account.user_id}) is False:
+            logger.info("sign-in refused: place paused")
+            raise ApiError(403, "place_paused", headers=account_cookie_cleared())
         if not session.scalar(
             text("SELECT password_unchanged(:user_id, :hash)"),
             {"user_id": account.user_id, "hash": account.password_hash},

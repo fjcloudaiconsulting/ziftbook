@@ -1,0 +1,8 @@
+7 days left to choose who keeps access to ziftbook
+# 7 days left to choose who keeps access
+
+“$business” still has more people than its plan on ziftbook includes. In 7 days, only as many people as the plan has room for can sign in. The others keep their bookings and details, and get back in as soon as the plan has room.
+
+Choose who keeps access on the Team page, or choose a bigger plan in Settings.
+
+[Open Settings]($link)

@@ -342,13 +342,14 @@ def offered(
 
 
 # member_id narrows it to one worker, so an unassigned or unknown member_id yields no candidates in
-# this one query, never a 404 (no membership probing).
+# this one query, never a 404 (no membership probing). A member paused past the plan's places
+# (ZIF-78) is no candidate: they cannot sign in to see the booking.
 CANDIDATES = text("""
 SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
 FROM working_hours w JOIN service_workers s
   ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
 JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
-WHERE s.service_id = :service_id AND m.role <> 'removed'
+WHERE s.service_id = :service_id AND m.role <> 'removed' AND m.access_paused_at IS NULL
   AND (CAST(:member_id AS uuid) IS NULL OR w.member_id = :member_id)
 """)
 

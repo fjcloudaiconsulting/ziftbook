@@ -180,7 +180,7 @@ def test_any_sign_out_ends_both_sessions_on_this_browser(
 
 # FENCE (security N1). Wrong impl: auth.resolve falling back to the account session when the
 # business cookie is missing. Every route outside /api/account and /api/public, not only those the
-# signed_in walk finds (photos.owner_tenant calls auth.resolve in its body).
+# signed_in walk finds.
 NO_SESSION_NEEDED = {
     ("GET", "/api/healthz"),
     ("GET", "/api/health/dependencies"),

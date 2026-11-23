@@ -1872,6 +1872,9 @@ def tell_team(
             )
 
 
+PAUSED = text("SELECT access_paused_at IS NOT NULL FROM memberships WHERE id = :id")
+
+
 @merchant_router.post(
     "/bookings",
     name="create",
@@ -1895,6 +1898,11 @@ def book(
         raise ApiError(404, "not_found")
     if not may_book_for(current, new.member_id):  # 3
         raise ApiError(403, "owner_only")
+    # ZIF-78. Named, not left to step 7's slot_unavailable: the owner can see the team, and the
+    # time is not what is wrong. Under the lock, which the enforce job does not take: a pause
+    # landing after this read lets this one booking through, and it stays as existing ones do.
+    if new.member_id is not None and db.scalar(PAUSED, {"id": new.member_id}):
+        raise ApiError(409, "member_paused")
     # 4. An off-grid "anyone" would pick by load and could land on someone on holiday.
     if new.override and new.member_id is None:
         raise ApiError(422, "member_required")

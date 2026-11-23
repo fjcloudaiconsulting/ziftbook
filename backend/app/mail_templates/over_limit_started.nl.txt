@@ -1,0 +1,10 @@
+Je team is groter dan je abonnement op ziftbook toestaat
+# Je team is groter dan je abonnement toestaat
+
+“$business” heeft meer mensen dan het abonnement op ziftbook toestaat. De komende 30 dagen verandert er niets, behalve dat je niemand nieuw kunt uitnodigen.
+
+Na die 30 dagen kunnen alleen zoveel mensen inloggen als er in het abonnement passen. Op de pagina Team kies je wie toegang houdt; doe je dat niet, dan houden eerst de eigenaren toegang en daarna wie het langst lid is. Niemands afspraken of gegevens worden verwijderd, en wie buiten de boot valt, kan weer inloggen zodra er plek is.
+
+Wil je je hele team houden? Kies dan een groter abonnement in Instellingen.
+
+[Open Instellingen]($link)

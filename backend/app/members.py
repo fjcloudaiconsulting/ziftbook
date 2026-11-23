@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from app import auth
+from app import auth, enforcement
 from app.accounts import DisplayNameText
 from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.errors import ApiError, Error
@@ -29,6 +29,8 @@ class MemberOut(BaseModel):
     email: str
     role: Role
     display_name: str | None
+    keeps_access: bool  # ZIF-78: the owner's pick of who keeps a place while over the limit
+    paused: bool  # ZIF-78: past the grace, not within the places kept: cannot sign in
 
 
 class RoleChange(BaseModel):
@@ -43,13 +45,20 @@ class DisplayNameChange(BaseModel):
     display_name: DisplayNameText | None  # required; null clears the name
 
 
+class KeepsAccessChange(BaseModel):
+    # Its own model, field by field: nothing a client sends can name a user or a business.
+    model_config = ConfigDict(strict=True, extra="forbid")
+    keeps: bool
+
+
 class DisplayNameOut(BaseModel):
     # Deliberately not MemberOut: MemberOut carries the email, and a worker calls this route.
     display_name: str | None
 
 
 MEMBERS = """
-SELECT m.id AS member_id, m.user_id, u.email, m.role, m.display_name
+SELECT m.id AS member_id, m.user_id, u.email, m.role, m.display_name, m.keeps_access,
+       m.access_paused_at IS NOT NULL AS paused
 FROM memberships m JOIN users u ON u.id = m.user_id
 WHERE m.role <> 'removed'
 """
@@ -177,6 +186,8 @@ def change_role(
         target=f"user:{member.user_id}",
         details={"old": member.role, "new": change.role},
     )
+    # ZIF-78: who keeps a place ranks owners before workers.
+    enforcement.enqueue(current.db, current.tenant_id)
     return member.model_copy(update={"role": change.role})
 
 
@@ -221,9 +232,11 @@ def remove(member_id: UUID, current: CurrentOwner, request: Request) -> None:
         current.db.execute(text(f"DELETE FROM {table} WHERE member_id = :id"), {"id": member_id})
     # 0034's comment: "removing a member drops their holds" (worker_id, not member_id).
     current.db.execute(text("DELETE FROM booking_holds WHERE worker_id = :id"), {"id": member_id})
+    # ZIF-78: keeps_access cleared too, so a member invited back starts with no pick.
     guarded(
         current,
-        "UPDATE memberships SET role = 'removed', removed_at = now() WHERE id = :id",
+        "UPDATE memberships SET role = 'removed', removed_at = now(), keeps_access = false"
+        " WHERE id = :id",
         member_id,
     )
     auth.record(
@@ -233,6 +246,8 @@ def remove(member_id: UUID, current: CurrentOwner, request: Request) -> None:
         actor_user_id=current.user_id,
         target=f"user:{member.user_id}",
     )
+    # ZIF-78: one place freed may bring the business back within its plan.
+    enforcement.enqueue(current.db, current.tenant_id)
 
 
 @router.put(
@@ -279,3 +294,38 @@ def set_display_name(
             details={"display_name": "set" if change.display_name else "cleared"},
         )
     return DisplayNameOut(display_name=change.display_name)
+
+
+@router.put(
+    "/members/{member_id}/keeps-access",
+    name="set_keeps_access",
+    status_code=204,
+    responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)},
+)
+def set_keeps_access(
+    member_id: UUID, change: KeepsAccessChange, current: CurrentOwner, request: Request
+) -> None:
+    """Pick whether a member keeps their place once the business is past the grace of being over
+    its plan's places (ZIF-78). Applied at once: who is paused is checked again straight after."""
+    # NO KEY UPDATE on the membership, as every write of a member's data (CONTRIBUTING.md).
+    user_id = member_user(current, member_id, lock=True)
+    # Never naming role in the SET list (keep_an_owner, as set_display_name). No row back: it was
+    # already so, and nothing changes.
+    changed = current.db.execute(
+        text(
+            "UPDATE memberships SET keeps_access = :keeps "
+            "WHERE id = :id AND keeps_access <> :keeps RETURNING id"
+        ),
+        {"id": member_id, "keeps": change.keeps},
+    ).first()
+    if changed is None:
+        return
+    auth.record(
+        current.db,
+        request,
+        "member_keeps_access_changed",
+        actor_user_id=current.user_id,
+        target=f"user:{user_id}",
+        details={"keeps": change.keeps},
+    )
+    enforcement.enqueue(current.db, current.tenant_id)

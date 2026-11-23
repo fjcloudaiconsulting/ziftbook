@@ -1,0 +1,10 @@
+Your team is bigger than your ziftbook plan allows
+# Your team is bigger than your plan allows
+
+“$business” has more people than its plan on ziftbook includes. For the next 30 days nothing changes, except that you can't invite anyone new.
+
+After those 30 days, only as many people as the plan has room for can sign in. You can choose who keeps access on the Team page; if you don't, the owners keep it first, then the people who joined earliest. Nobody's bookings or details are deleted, and anyone left out gets back in as soon as the plan has room.
+
+To keep your whole team, choose a bigger plan in Settings.
+
+[Open Settings]($link)

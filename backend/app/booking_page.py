@@ -36,6 +36,8 @@ FROM services s
 JOIN service_workers sw ON sw.tenant_id = s.tenant_id AND sw.service_id = s.id
 JOIN memberships m ON m.tenant_id = sw.tenant_id AND m.id = sw.member_id
                       AND m.role <> 'removed'
+                      -- ZIF-78: a member paused past the plan's places is offered nowhere.
+                      AND m.access_paused_at IS NULL
 WHERE s.archived_at IS NULL
   AND EXISTS (SELECT 1 FROM working_hours w WHERE w.tenant_id = m.tenant_id AND w.member_id = m.id)
 ORDER BY s.id, m.display_name NULLS LAST, m.id

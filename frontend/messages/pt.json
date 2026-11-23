@@ -124,6 +124,7 @@
     "tryLater": "Tentativas demais por agora. Tente de novo mais tarde, ou redefina sua senha.",
     "noBusiness": "Esta conta não faz mais parte de um negócio. Peça ao responsável para adicionar você de novo.",
     "suspended": "Este negócio está suspenso, então a equipe não consegue entrar por enquanto. Dúvidas? Escreva para support@fjconsulting.io.",
+    "paused": "O plano deste negócio não inclui um lugar para você no momento, então você não consegue entrar. Fale com o proprietário.",
     "newHere": "Novo no ziftbook?",
     "createBusiness": "Cadastre seu negócio"
   },
