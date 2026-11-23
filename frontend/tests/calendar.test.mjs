@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { actionsFor, bookingHref, bookingMeta, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, intervalEnd, intervalShown, lanes, monToSun, nowTop, parseView, switchDate, toneOf, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, bookingHref, bookingMeta, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, intervalEnd, intervalShown, lanes, agendaWindows, mergeWeeks, moveDate, nowTop, parseView, toneOf, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 import { formatMoney } from "../lib/money.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -526,50 +526,60 @@ describe("historyLabel in a +14 zone", () => {
   });
 });
 
-describe("seven days and Mon-Sun (ZIF-143)", () => {
-  const TODAY = "2026-10-07"; // a Wednesday
+describe("Day, Week and Month (ZIF-294)", () => {
+  const TODAY = "2026-10-07";
   const parse = (query, remembered) => parseView(new URLSearchParams(query), TODAY, "owner", "me", null, remembered);
-  test("7 days start on the shown date, Mon-Sun on its Monday (F1)", () => {
-    assert.deepEqual(visibleDays("days", TODAY), ["2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13"]);
+  test("Week contains the chosen date, Monday through Sunday, including a year boundary", () => {
+    assert.deepEqual(visibleDays("week", "2027-01-03"), ["2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02", "2027-01-03"]);
     assert.equal(visibleDays("week", TODAY)[0], "2026-10-05");
+    assert.deepEqual(visibleDays("day", TODAY), [TODAY]);
   });
-  test("the URL names the view; old week links stay Mon-Sun (F2)", () => {
-    assert.equal(parse("view=days").view, "days");
-    assert.equal(parse("view=week").view, "week");
-    assert.equal(parse("view=day", "days").view, "day");
-    assert.equal(parse("view=week", "days").view, "week");
-    assert.equal(parse("view=year", "days").view, "day");
-  });
-  test("with no view in the URL the remembered one opens, else the day (F2)", () => {
-    assert.equal(parse("", "days").view, "days");
-    assert.equal(parse("date=2026-10-01", "week").view, "week");
-    assert.equal(parse("", "year").view, "day");
-    assert.equal(parse("", null).view, "day");
+  test("legacy URL and remembered days map to Week; URL wins over storage", () => {
+    assert.equal(parse("view=days").view, "week");
+    assert.equal(parse("", "days").view, "week");
+    assert.equal(parse("view=month", "days").view, "month");
+    assert.equal(parse("view=day", "month").view, "day");
+    assert.equal(parse("", "month").view, "month");
+    assert.equal(parse("view=year", "month").view, "day");
     assert.equal(parse("").view, "day");
+    assert.equal(new URL(hrefFor({ view: "days", date: TODAY, member: "all" }, {}), "http://x").searchParams.get("view"), "week");
   });
-  test("Mon-Sun to 7 days starts at today inside that week, else at its Monday (F3)", () => {
-    assert.equal(switchDate("week", "days", "2026-10-05", TODAY), TODAY);
-    assert.equal(switchDate("week", "days", "2026-10-09", TODAY), TODAY);
-    assert.equal(switchDate("week", "days", "2026-10-11", TODAY), TODAY);
-    assert.equal(switchDate("week", "days", "2026-10-15", TODAY), "2026-10-12");
-    assert.equal(switchDate("week", "days", "2026-09-30", TODAY), "2026-09-28");
+  test("Month covers whole Monday-first weeks, with five rows minimum or six when needed", () => {
+    for (const [date, first, last, count] of [
+      ["2026-11-23", "2026-10-26", "2026-12-06", 42],
+      ["2026-10-07", "2026-09-28", "2026-11-01", 35],
+      ["2027-02-28", "2027-02-01", "2027-03-07", 35],
+      ["2028-02-29", "2028-01-31", "2028-03-05", 35],
+    ]) {
+      const days = visibleDays("month", date);
+      assert.deepEqual([days[0], days.at(-1), days.length], [first, last, count]);
+      assert.equal(weekdayOf(days[0]), 1);
+      assert.equal(weekdayOf(days.at(-1)), 7);
+      assert.ok(days.includes(date));
+    }
   });
-  test("every other switch keeps the shown date", () => {
-    assert.equal(switchDate("days", "week", "2026-10-09", TODAY), "2026-10-09");
-    assert.equal(switchDate("day", "days", "2026-10-09", TODAY), "2026-10-09");
-    assert.equal(switchDate("week", "day", "2026-10-09", TODAY), "2026-10-09");
-    assert.equal(switchDate("days", "days", "2026-10-09", TODAY), "2026-10-09");
+  test("previous and next move by the selected unit without month-end overflow; Today resets every view", () => {
+    assert.equal(moveDate("day", "2026-12-31", 1, TODAY), "2027-01-01");
+    assert.equal(moveDate("week", "2026-12-31", 1, TODAY), "2027-01-07");
+    assert.equal(moveDate("week", "2026-12-31", -1, TODAY), "2026-12-24");
+    assert.equal(moveDate("month", "2026-01-31", 1, TODAY), "2026-02-01");
+    assert.equal(moveDate("month", "2026-01-31", -1, TODAY), "2025-12-01");
+    assert.equal(moveDate("month", "2026-12-31", 1, TODAY), "2027-01-01");
+    for (const view of ["day", "week", "month"]) assert.equal(moveDate(view, "2025-12-31", 0, TODAY), TODAY);
   });
-  test("Mon-Sun is named by Intl in each language, without abbreviation dots", () => {
-    const label = (locale) => monToSun(new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }));
-    assert.equal(label("en-GB"), "Mon–Sun");
-    assert.equal(label("nl"), "ma–zo");
-    assert.equal(label("pt"), "seg–dom");
+  test("month requests cover all visible days without gaps and stay below eight elapsed days at both DST changes", () => {
+    for (const [date, lengths] of [["2026-03-29", [168, 168, 168, 168, 167, 168]], ["2026-10-25", [168, 168, 168, 169, 168]]]) {
+      const days = visibleDays("month", date);
+      const windows = agendaWindows(days, AMS);
+      assert.deepEqual(windows.map((w) => (at(w.to) - at(w.from)) / 3_600_000), lengths);
+      assert.equal(windows[0].from, dayWindow(days[0], AMS, days.length).from);
+      assert.equal(windows.at(-1).to, dayWindow(days[0], AMS, days.length).to);
+      for (let i = 1; i < windows.length; i++) assert.equal(windows[i].from, windows[i - 1].to);
+    }
+    assert.deepEqual(agendaWindows([TODAY], AMS), [dayWindow(TODAY, AMS, 1)]);
   });
-  test("links carry the 7-day view", () => {
-    const query = (href) => Object.fromEntries(new URL(href, "http://x").searchParams);
-    assert.equal(query(hrefFor({ view: "days", date: TODAY, member: "all" }, {})).view, "days");
-    assert.equal(query(hrefFor({ view: "days", date: TODAY, member: "all" }, { view: "week" })).view, "week");
+  test("cross-week bookings and blocks are merged once by ID", () => {
+    assert.deepEqual(mergeWeeks([[{ id: "a" }, { id: "cross" }], [{ id: "cross" }, { id: "b" }], []]), [{ id: "a" }, { id: "cross" }, { id: "b" }]);
   });
 });
 

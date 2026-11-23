@@ -8,9 +8,8 @@ import { formatMoney } from "./money.ts";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.ts";
 
 export type Role = "owner" | "worker";
-// `week` is Monday to Sunday (old links keep that meaning); `days` is seven days from the shown date.
-export type View = "day" | "week" | "days";
-const VIEWS: string[] = ["day", "week", "days"];
+export type View = "day" | "week" | "month";
+const VIEWS: string[] = ["day", "week", "month"];
 
 // The shortest an item is drawn and packed: the 24px tap target at 64px an hour is 22.5 minutes, so two
 // back-to-back 15-minute bookings take lanes instead of overlapping under their minimum height. It also
@@ -35,24 +34,30 @@ export function dayWindow(dateISO: string, tz: string, n: number): { from: strin
   return { from: localToInstant(dateISO, "00:00", tz), to: localToInstant(addDaysISO(dateISO, n), "00:00", tz) };
 }
 
-/** The local days a view shows: seven from Monday, seven from the date, or the one day. */
+/** Monday-first weeks, with at least five whole weeks in the month grid. */
 export function visibleDays(view: View, dateISO: string): string[] {
-  const first = view === "week" ? weekStart(dateISO) : dateISO;
-  return Array.from({ length: view === "day" ? 1 : 7 }, (_, i) => addDaysISO(first, i));
+  const first = view === "month" ? weekStart(`${dateISO.slice(0, 7)}-01`) : view === "week" ? weekStart(dateISO) : dateISO;
+  const last = view === "month" ? addDaysISO(moveDate(view, dateISO, 1, dateISO), -1) : first;
+  const length = view === "month" ? Math.max(35, Math.ceil(((Date.parse(last) - Date.parse(first)) / 86_400_000 + 1) / 7) * 7) : view === "week" ? 7 : 1;
+  return Array.from({ length }, (_, i) => addDaysISO(first, i));
 }
 
-/** The date a view switch lands on, so the place is kept: Mon-Sun to 7 days starts at today when today is
- * in that week, else at its Monday. Every other switch keeps the date (Mon-Sun shows the Monday week that
- * holds the first visible day by itself). */
-export function switchDate(from: View, to: View, dateISO: string, todayISO: string): string {
-  if (from !== "week" || to !== "days") return dateISO;
-  return weekStart(todayISO) === weekStart(dateISO) ? todayISO : weekStart(dateISO);
+/** Previous, Today and Next; a month step lands on its first day, without end-of-month overflow. */
+export function moveDate(view: View, dateISO: string, direction: -1 | 0 | 1, todayISO: string): string {
+  if (direction === 0) return todayISO;
+  if (view !== "month") return addDaysISO(dateISO, direction * (view === "week" ? 7 : 1));
+  const [year, month] = dateISO.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1 + direction, 1)).toISOString().slice(0, 10);
 }
 
-/** The Mon-Sun switch's label from Intl short weekday names, so every locale gets its own; a trailing
- * period goes ("seg.–dom." reads "seg–dom", as designed). `weekday` formats in UTC. */
-export function monToSun(weekday: Intl.DateTimeFormat): string {
-  return ["2026-10-05", "2026-10-11"].map((day) => weekday.format(new Date(`${day}T12:00:00Z`)).replace(/\.$/, "")).join("–");
+/** Both range endpoints accept at most eight elapsed days: seven local days stay under that at DST. */
+export function agendaWindows(days: string[], tz: string): { from: string; to: string }[] {
+  return Array.from({ length: Math.ceil(days.length / 7) }, (_, i) => dayWindow(days[i * 7], tz, Math.min(7, days.length - i * 7)));
+}
+
+/** An item crossing a week boundary appears in both responses. */
+export function mergeWeeks<T extends { id: string }>(weeks: T[][]): T[] {
+  return [...new Map(weeks.flat().map((item) => [item.id, item])).values()];
 }
 
 /** The booking panel's "When", in `tz`: whether the start is today, both clock times, and whether the
@@ -433,7 +438,8 @@ export function parseView(
   remembered?: string | null,
 ): CalendarView {
   const date = params.get("date");
-  const view = params.get("view") ?? remembered ?? "day";
+  const askedView = params.get("view") ?? remembered ?? "day";
+  const view = askedView === "days" ? "week" : askedView;
   const asked = params.get("member");
   let member = role === "worker" ? selfId : (asked ?? "all");
   if (role === "owner" && member !== "all" && memberIds && !memberIds.includes(member)) member = "all";
@@ -469,7 +475,7 @@ export function closedDetail(before: CalendarView | null, now: CalendarView): bo
 /** A calendar URL (no locale: the locale-aware Link adds it). Whatever the patch does not name is
  * dropped when it moves the window (date, view or member): an open booking or panel never outlives what
  * it was opened from. `new` and `block` replace the open booking; `move` needs one. */
-export function hrefFor(current: Partial<CalendarView> & Pick<CalendarView, "view" | "date" | "member">, patch: Partial<CalendarView>): string {
+export function hrefFor(current: Omit<Partial<CalendarView>, "view"> & Pick<CalendarView, "date" | "member"> & { view: View | "days" }, patch: Partial<CalendarView>): string {
   const next = { ...current, ...patch };
   const moved = next.date !== current.date || next.view !== current.view || next.member !== current.member;
   const carry = (name: "booking" | "panel" | "at" | "with") => (moved && !(name in patch) ? null : (next[name] ?? null));
@@ -477,7 +483,7 @@ export function hrefFor(current: Partial<CalendarView> & Pick<CalendarView, "vie
   let panel = carry("panel");
   if (panel === "new" || panel === "block") booking = null;
   if (panel === "move" && !booking) panel = null;
-  const query = new URLSearchParams({ view: next.view, date: next.date, member: next.member });
+  const query = new URLSearchParams({ view: next.view === "days" ? "week" : next.view, date: next.date, member: next.member });
   if (booking) query.set("booking", booking);
   if (panel) {
     query.set("panel", panel);

@@ -15,11 +15,11 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { bookingMeta, closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, intervalEnd, intervalShown, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, toneOf, type View, visibleDays, weekdayOf } from "@/lib/calendar";
+import { agendaWindows, bookingMeta, closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, intervalEnd, intervalShown, lanes, mergeWeeks, moveDate, nowTop, type Panel, parseView, type Slice, spanTimes, toneOf, type View, visibleDays, weekdayOf } from "@/lib/calendar";
 import { canAnswerRequests, clientLabel, dateLocale, type Role } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { messageShown, slotAt } from "@/lib/new-booking";
-import { addDaysISO, localDateISO, localTime, localToInstant } from "@/lib/time-off";
+import { localDateISO, localTime, localToInstant } from "@/lib/time-off";
 import { agendaPhase, blockLabel, mergeAgenda, nowLineAt } from "@/lib/today";
 
 import { useConsole } from "../../_ui/console";
@@ -43,7 +43,7 @@ type Popover = { at: string; time: string; member: string; name: string; column:
 
 // The last view, per browser (ZIF-143). Blocked storage reads nothing, and the calendar opens in Day as before.
 const VIEW_KEY = "ziftbook.calendar.view";
-// A phone's list or time grid, per browser (ZIF-283). Blocked storage reads nothing: the list, as before.
+// A phone's saved layout; Month defaults to its compact grid, Day and Week to the list.
 const LAYOUT_KEY = "ziftbook.calendar.phoneLayout";
 function remembered(key: string): string | null {
   try {
@@ -115,9 +115,12 @@ export function Calendar() {
     members?.map((m) => m.member_id) ?? null,
     params.get("view") === null ? remembered(VIEW_KEY) : null,
   );
-  const [phoneGrid, setPhoneGrid] = useState(() => remembered(LAYOUT_KEY) === "grid");
+  const [phoneLayout, setPhoneLayout] = useState(() => remembered(LAYOUT_KEY));
+  const phoneGrid = phoneLayout ? phoneLayout === "grid" : view.view === "month";
+  const [pickedDay, setPickedDay] = useState<{ date: string; day: string } | null>(null);
+  const monthDaySelected = pickedDay?.date === view.date ? pickedDay.day : view.date;
   function choosePhoneLayout(grid: boolean) {
-    setPhoneGrid(grid);
+    setPhoneLayout(grid ? "grid" : "list");
     try {
       localStorage.setItem(LAYOUT_KEY, grid ? "grid" : "list");
     } catch {
@@ -160,18 +163,18 @@ export function Calendar() {
   useEffect(() => {
     const mine = ++seq.current;
     Promise.all([
-      call(() => bookingApprovalsRange({ query: range })),
-      call(() => timeOffRange({ query: range })),
+      Promise.all(agendaWindows(days, tz).map((query) => call(() => bookingApprovalsRange({ query })))),
+      Promise.all(agendaWindows(days, tz).map((query) => call(() => timeOffRange({ query })))),
       call(() => openingHoursRead()),
       isOwner ? call(() => membersList()) : Promise.resolve(null),
     ]).then(([bookings, off, opening, team]) => {
       // A slower earlier window never overwrites a later one.
       if (mine !== seq.current) return;
-      const bad = [bookings, off, opening, team].find((outcome) => outcome && (outcome.status !== 200 || !outcome.data));
+      const bad = [...bookings, ...off, opening, team].find((outcome) => outcome && (outcome.status !== 200 || !outcome.data));
       if (bad) return setFailure({ key, problem: problem(bad) });
       setFailure(null);
       if (team?.data) setMembers(team.data);
-      setLoaded({ key, bookings: bookings.data!, blocks: off.data!, opening: opening.data! });
+      setLoaded({ key, bookings: mergeWeeks(bookings.map((outcome) => outcome.data!)), blocks: mergeWeeks(off.map((outcome) => outcome.data!)), opening: opening.data! });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.from, range.to, reload]);
@@ -238,16 +241,16 @@ export function Calendar() {
     (link ?? document.getElementById("detail-title") ?? document.querySelector<HTMLElement>("h1"))?.focus();
   }, [data, failed]);
   const href = (patch: Parameters<typeof hrefFor>[1]) => hrefFor(view, patch);
-  // Both seven-day views draw the same grid; only the stepper and the switch tell them apart.
-  const weekView = view.view !== "day";
-  const sevenDays = view.view === "days";
+  const weekView = view.view === "week";
+  const monthView = view.view === "month";
 
   const longDay = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
   const monthDay = new Intl.DateTimeFormat(dateLocale(locale), { day: "numeric", month: "long", timeZone: "UTC" });
   const weekdayShort = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", timeZone: "UTC" });
   const dayNumber = new Intl.DateTimeFormat(dateLocale(locale), { day: "numeric", timeZone: "UTC" });
   const asDate = (iso: string) => new Date(`${iso}T12:00:00Z`);
-  const dateLine = weekView ? t("weekRange", { from: monthDay.format(asDate(days[0])), to: monthDay.format(asDate(days[6])) }) : longDay.format(asDate(view.date));
+  const monthYear = new Intl.DateTimeFormat(dateLocale(locale), { month: "long", year: "numeric", timeZone: "UTC" });
+  const dateLine = monthView ? monthYear.format(asDate(view.date)) : weekView ? t("weekRange", { from: monthDay.format(asDate(days[0])), to: monthDay.format(asDate(days[6])) }) : longDay.format(asDate(view.date));
 
   const team = members ?? [];
   const nameOf = (m: MemberOut) => m.display_name ?? person("nameNotSet");
@@ -278,7 +281,7 @@ export function Calendar() {
   const dayMembers: { id: string; name: string }[] = !isOwner
     ? [{ id: session.member_id, name: session.display_name ?? person("nameNotSet") }]
     : (view.member === "all" ? team : team.filter((m) => m.member_id === view.member)).map((m) => ({ id: m.member_id, name: nameOf(m) }));
-  const columns: Column[] = weekView
+  const columns: Column[] = monthView ? [] : weekView
     ? days.map((day) => ({
         key: day,
         day,
@@ -295,7 +298,7 @@ export function Calendar() {
     // Real ends, gap included, never the padded one: 8 padded minutes add no empty hour (ZIF-57).
     everyCell.map((cell) => ({ start: cell.slice.start, end: cell.free, allDay: cell.item.kind === "block" && cell.item.allDay })),
   );
-  const closedToday = !weekView && closedDay(data?.opening ?? [], weekdayOf(view.date));
+  const closedToday = view.view === "day" && closedDay(data?.opening ?? [], weekdayOf(view.date));
 
   const top = (minutes: number) => `calc(var(--hour) * ${(minutes - hours.from * 60) / 60})`;
 
@@ -489,6 +492,53 @@ export function Calendar() {
     );
   }
 
+  function renderMonth() {
+    return (
+      <div className={`${phoneGrid ? "" : css.deskOnly} ${css.hideWithDetail} ${uiStyles.stack}`}>
+        <div className={css.monthGrid}>
+          {days.slice(0, 7).map((day) => <div key={day} className={css.monthWeekday}>{weekdayShort.format(asDate(day))}</div>)}
+          {days.map((day) => {
+            const list = items.filter((item) => (view.member === "all" || memberOf(item) === view.member) && daySlices(item, [day], tz).length > 0);
+            const count = list.filter((item) => item.kind === "booking").length;
+            const closed = closedDay(data?.opening ?? [], weekdayOf(day));
+            const label = [t("daySummary", { date: longDay.format(asDate(day)), count }), closed ? t("closedTitle") : null, list.some((item) => item.kind === "block") ? t("blocked") : null].filter(Boolean).join(", ");
+            return (
+              <div key={day} className={`${css.monthCell} ${day.slice(0, 7) !== view.date.slice(0, 7) ? css.otherMonth : ""} ${closed ? css.closed : ""}`}>
+                <Link className={`${css.monthDate} ${css.deskOnly}`} href={href({ view: "day", date: day })} scroll={false} aria-label={label} aria-current={day === todayISO ? "date" : undefined}>
+                  <span>{dayNumber.format(asDate(day))}</span>
+                </Link>
+                <button type="button" className={`${css.monthPick} ${css.phoneOnly}`} aria-label={label} aria-pressed={monthDaySelected === day} aria-current={day === todayISO ? "date" : undefined} onClick={() => setPickedDay({ date: view.date, day })}>
+                  <span>{dayNumber.format(asDate(day))}</span>
+                  <span className={css.monthDots} aria-hidden="true">{list.slice(0, 3).map((item) => <i key={item.key} className={item.kind === "block" ? css.blockDot : css[toneOf(item.booking.status)]} />)}</span>
+                </button>
+                <ul className={`${css.monthBookings} ${css.deskOnly}`}>
+                  {list.slice(0, 3).map((item) => {
+                    if (item.kind === "block") return <li key={item.key} className={css.monthBlock}>{blockText(item).label}</li>;
+                    const { booking } = item;
+                    const chip = chipOf(booking.status);
+                    const label = t("itemLabel", { start: localTime(booking.starts_at, tz), end: localTime(booking.ends_at, tz), client: clientLabel(booking, clients("erased")), service: serviceOf(booking), status: chip ? today(chip.word) : booking.status });
+                    return (
+                      <li key={item.key}>
+                        <Link className={`${css.monthBooking} ${css[toneOf(booking.status)]}`} href={href({ booking: booking.id })} scroll={false} replace={Boolean(view.booking)} data-open={booking.id} aria-label={label} title={label} aria-current={booking.id === view.booking ? "true" : undefined} onClick={() => { if (!view.booking) openedInApp.current = true; }}>
+                          <b>{localTime(booking.starts_at, tz)}</b> <ClientName booking={booking} /> · {serviceOf(booking)}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                  {list.length > 3 && <li><Link className={css.monthMore} href={href({ view: "day", date: day })} scroll={false}>{t("more", { count: list.length - 3 })}</Link></li>}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+        <section className={`${css.phoneOnly} ${css.dayBlock}`} aria-label={longDay.format(asDate(monthDaySelected))}>
+          <h2 className={css.dayHeading}><Link href={href({ view: "day", date: monthDaySelected })} scroll={false}>{longDay.format(asDate(monthDaySelected))}</Link></h2>
+          {dayList(monthDaySelected)}
+        </section>
+      </div>
+    );
+  }
+
   function onClose(event: MouseEvent<HTMLAnchorElement>) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
     // Opened from this page: go back to where the person was. A deep link has no such place: replace.
@@ -565,8 +615,8 @@ export function Calendar() {
     setSettled(done.id);
     openedInApp.current = false;
     const day = localDateISO(new Date(done.startsAt), tz);
-    // A day already in the 7 days keeps the window where it was; any other view goes to the booking's day.
-    const date = sevenDays && days.includes(day) ? view.date : day;
+    // Keep a booking inside the current window in place.
+    const date = days.includes(day) ? view.date : day;
     setMessage({ text: done.message, booking: done.id, date, view: view.view });
     announce(done.message);
     setReload((n) => n + 1);
@@ -574,7 +624,6 @@ export function Calendar() {
     router.replace(href({ panel: null, booking: done.id, date, at: null, with: null }), { scroll: false });
   }
 
-  const step = weekView ? 7 : 1;
   const colMember = weekView ? selfMember : view.member;
   const options = [...(weekView ? [] : [{ id: "all", name: t("everyone") }]), ...team.map((m) => ({ id: m.member_id, name: nameOf(m) }))];
   const empty = data !== null && everyCell.length === 0;
@@ -595,20 +644,20 @@ export function Calendar() {
           {dateLine}
         </p>
         <span className={css.stepper}>
-          <Link href={href({ date: addDaysISO(view.date, -step) })} scroll={false} aria-label={sevenDays ? t("prevDays") : weekView ? t("prevWeek") : t("prevDay")}>
+          <Link href={href({ date: moveDate(view.view, view.date, -1, todayISO) })} scroll={false} aria-label={monthView ? t("prevMonth") : weekView ? t("prevWeek") : t("prevDay")}>
             <span aria-hidden="true">{"‹"}</span>
           </Link>
-          <Link href={href({ date: todayISO })} scroll={false}>
+          <Link href={href({ date: moveDate(view.view, view.date, 0, todayISO) })} scroll={false} onClick={() => setPickedDay(null)}>
             {view.view === "week" ? t("thisWeek") : t("today")}
           </Link>
-          <Link href={href({ date: addDaysISO(view.date, step) })} scroll={false} aria-label={sevenDays ? t("nextDays") : weekView ? t("nextWeek") : t("nextDay")}>
+          <Link href={href({ date: moveDate(view.view, view.date, 1, todayISO) })} scroll={false} aria-label={monthView ? t("nextMonth") : weekView ? t("nextWeek") : t("nextDay")}>
             <span aria-hidden="true">{"›"}</span>
           </Link>
         </span>
         <nav className={css.seg} aria-label={t("view")}>
-          {(["day", "days", "week"] as View[]).map((to) => (
-            <Link key={to} href={href({ view: to, date: switchDate(view.view, to, view.date, todayISO) })} scroll={false} aria-current={view.view === to ? "true" : undefined}>
-              {to === "day" ? t("day") : to === "days" ? t("days") : monToSun(weekdayShort)}
+          {(["day", "week", "month"] as View[]).map((to) => (
+            <Link key={to} href={href({ view: to })} scroll={false} aria-current={view.view === to ? "true" : undefined}>
+              {t(to)}
             </Link>
           ))}
         </nav>
@@ -676,9 +725,9 @@ export function Calendar() {
             <>
               {!phoneGrid && (
                 <div className={`${css.phoneOnly} ${css.phoneList} ${css.hideWithDetail}`}>
-                  {weekView ? (
+                  {view.view !== "day" ? (
                     <div className={uiStyles.stack}>
-                      {days.map((day) => (
+                      {days.filter((day) => !monthView || day.slice(0, 7) === view.date.slice(0, 7)).map((day) => (
                         <section key={day} className={css.dayBlock} aria-label={longDay.format(asDate(day))}>
                           <h2 className={css.dayHeading}>{longDay.format(asDate(day))}</h2>
                           {dayList(day)}
@@ -690,53 +739,54 @@ export function Calendar() {
                   )}
                 </div>
               )}
-              {/* The grid on a phone too once chosen there; hideWithDetail only acts on a phone. */}
-              <div className={`${phoneGrid ? "" : css.deskOnly} ${css.hideWithDetail} ${uiStyles.stack}`}>
-                {(closedToday || empty) && (
-                  <p className={css.gridNote}>
-                    <strong>{closedToday ? t("closedTitle") : t("nothingBooked")}</strong>
-                    {closedToday && t("closedBody")}
-                  </p>
-                )}
-                <div className={css.gridWrap} style={{ "--hours": hours.to - hours.from } as CSSProperties}>
-                  <div>
-                    <div className={css.gutterHead} />
-                    <div className={css.hours} aria-hidden="true">
-                      {Array.from({ length: hours.to - hours.from }, (_, i) => (
-                        <span key={i} style={{ "--at": i } as CSSProperties}>
-                          {`${hours.from + i}:00`}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className={css.scroller}>
-                    <div className={css.inner} style={{ "--cols": columns.length, "--mincol": weekView ? "0px" : "8rem" } as CSSProperties}>
-                      <div className={css.heads}>
-                        {columns.map((column) => (
-                          <div key={column.key} className={css.colHead} data-col={column.key} tabIndex={-1} aria-current={weekView && column.day === todayISO ? "date" : undefined}>
-                            {column.label}
-                            {column.small && <small>{column.small}</small>}
-                          </div>
+              {monthView ? renderMonth() : (
+                <div className={`${phoneGrid ? "" : css.deskOnly} ${css.hideWithDetail} ${uiStyles.stack}`}>
+                  {(closedToday || empty) && (
+                    <p className={css.gridNote}>
+                      <strong>{closedToday ? t("closedTitle") : t("nothingBooked")}</strong>
+                      {closedToday && t("closedBody")}
+                    </p>
+                  )}
+                  <div className={css.gridWrap} style={{ "--hours": hours.to - hours.from } as CSSProperties}>
+                    <div>
+                      <div className={css.gutterHead} />
+                      <div className={css.hours} aria-hidden="true">
+                        {Array.from({ length: hours.to - hours.from }, (_, i) => (
+                          <span key={i} style={{ "--at": i } as CSSProperties}>
+                            {`${hours.from + i}:00`}
+                          </span>
                         ))}
                       </div>
-                      <div className={css.lanes}>
-                        {columns.map((column) => {
-                          const line = nowTop(now, [column.day], hours, tz);
-                          return (
-                            <div key={column.key} className={`${css.lane} ${closedDay(data.opening, weekdayOf(column.day)) ? css.closed : ""}`} onClick={(event) => openSpot(event, column)}>
-                              <ul className={css.laneList} role="list" aria-label={column.ariaLabel}>
-                                {column.cells.map((cell) => renderCell(cell, column))}
-                              </ul>
-                              {line !== null && <div className={css.nowMark} style={{ top: `calc(var(--hour) * ${line / 60})` }} aria-hidden="true" />}
+                    </div>
+                    <div className={css.scroller}>
+                      <div className={css.inner} style={{ "--cols": columns.length, "--mincol": weekView ? "0px" : "8rem" } as CSSProperties}>
+                        <div className={css.heads}>
+                          {columns.map((column) => (
+                            <div key={column.key} className={css.colHead} data-col={column.key} tabIndex={-1} aria-current={weekView && column.day === todayISO ? "date" : undefined}>
+                              {column.label}
+                              {column.small && <small>{column.small}</small>}
                             </div>
-                          );
-                        })}
+                          ))}
+                        </div>
+                        <div className={css.lanes}>
+                          {columns.map((column) => {
+                            const line = nowTop(now, [column.day], hours, tz);
+                            return (
+                              <div key={column.key} className={`${css.lane} ${closedDay(data.opening, weekdayOf(column.day)) ? css.closed : ""}`} onClick={(event) => openSpot(event, column)}>
+                                <ul className={css.laneList} role="list" aria-label={column.ariaLabel}>
+                                  {column.cells.map((cell) => renderCell(cell, column))}
+                                </ul>
+                                {line !== null && <div className={css.nowMark} style={{ top: `calc(var(--hour) * ${line / 60})` }} aria-hidden="true" />}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <p className={css.legend}>{t(canAnswer ? "legend" : "legendOwner")}</p>
                 </div>
-                <p className={css.legend}>{t(canAnswer ? "legend" : "legendOwner")}</p>
-              </div>
+              )}
               <div className={`${css.phoneOnly} ${css.phoneActions} ${css.hideWithDetail}`}>
                 <Link className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`} href={href({ panel: "new", at: null, with: null })} scroll={false} onClick={openPanel}>
                   {t("newBooking")}
