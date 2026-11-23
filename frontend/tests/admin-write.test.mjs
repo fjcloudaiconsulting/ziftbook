@@ -17,7 +17,7 @@ describe("the write's answer", () => {
   });
 
   test("done, sign-in, changed, not found, invalid and other leave the phase alone", () => {
-    for (const [status, then] of [[204, "done"], [401, "signIn"], [403, "signIn"], [409, "changed"], [404, "notFound"], [422, "invalid"], [500, "other"]]) {
+    for (const [status, then] of [[201, "done"], [204, "done"], [401, "signIn"], [403, "signIn"], [409, "changed"], [404, "notFound"], [422, "invalid"], [500, "other"]]) {
       const out = recheck(initialRecheck, { type: "write", status });
       assert.deepEqual(out, { state: initialRecheck, then });
     }
@@ -64,4 +64,11 @@ describe("switching and resetting", () => {
     assert.equal(recheck(recovery, { type: "switch", kind: "app" }).state.kind, "app");
     assert.deepEqual(recheck(recovery, { type: "reset" }).state, initialRecheck);
   });
+});
+
+// Creation keeps the same recheck path, including the final 201 response.
+test("stale creation retries after a code and accepts 201", () => {
+  const checked = run(initialRecheck, { type: "write", status: 403, code: "second_factor_stale" }, { type: "code", status: 200 });
+  assert.equal(checked.then, "resend");
+  assert.equal(recheck(checked.state, { type: "write", status: 201 }).then, "done");
 });

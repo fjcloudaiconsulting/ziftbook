@@ -1,6 +1,6 @@
-"""Platform admins find, inspect, suspend and reactivate businesses (ZIF-73).
+"""Platform admins create, find, inspect, suspend and reactivate businesses.
 
-The two reads sit on admin_auth.admin_router (the second factor passed), the two writes on
+Reads sit on admin_auth.admin_router (the second factor passed), writes on
 admin_write_router (passed within 15 minutes). None reads a client's personal data: no clients,
 consents or booking links, and no address or browser from the audit log. A suspended business shows
 its upcoming confirmed times and their payments, never a booking id or anything about the client.
@@ -8,7 +8,7 @@ A business's created date is its uuidv7 id's.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -17,7 +17,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, services
+from app import accounts, admin, business_settings, limits, passwords, services
 from app.admin_auth import (
     CurrentAdmin,
     admin_router,
@@ -27,6 +27,7 @@ from app.admin_auth import (
 )
 from app.bookings import PAYMENT_COLUMNS, PaymentFact, payment_fact
 from app.business_settings import BusinessSettings
+from app.countries import COUNTRIES, Country
 from app.db import SessionLocal, join_tenant
 from app.errors import ApiError, Error
 from app.jobs import enqueue
@@ -38,6 +39,62 @@ RECENT_EVENTS = 20
 UPCOMING_LIMIT = 100
 
 Stripe = Literal["none", "onboarding", "ready"]
+
+
+class CreateBusiness(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    business_name: accounts.BusinessName
+    country: Country
+    name: accounts.DisplayNameText
+    email: passwords.Email
+
+
+class CreatedBusiness(BaseModel):
+    id: UUID
+
+
+@admin_write_router.post(
+    "/businesses",
+    status_code=201,
+    responses={s: {"model": Error} for s in (401, 403, 409, 415, 422, 429, 503)},
+)
+def create_business(
+    body: CreateBusiness, current: CurrentAdmin, request: Request
+) -> CreatedBusiness:
+    if limits.hit({f"admin_create_business:{current.user_id}": 10}, timedelta(hours=1)):
+        raise ApiError(429, "rate_limited")
+    defaults = COUNTRIES[body.country]
+    with SessionLocal.begin() as session:
+        created = session.execute(
+            text("""SELECT * FROM admin_create_business(
+                :hash, :email, :locale, :business_name, :country, :currency, :name)"""),
+            {
+                **body.model_dump(),
+                "hash": session_hash(request),
+                "currency": defaults.currency,
+                "locale": defaults.language,
+            },
+        ).one()
+        if created.outcome == "stale":
+            raise ApiError(403, "second_factor_stale")
+        if created.outcome == "already_registered":
+            raise ApiError(409, "account_exists")
+        accounts.initialise_business(session, created.tenant_id, body.country)
+        admin.record(
+            session,
+            request,
+            "business_created",
+            actor_user_id=current.user_id,
+            tenant_id=created.tenant_id,
+            target="business",
+            reason="Created from the admin console",
+        )
+        token_id = session.scalar(
+            text("SELECT start_email_token('password_reset', :email, :locale)"),
+            {"email": body.email, "locale": defaults.language},
+        )
+        enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
+    return CreatedBusiness(id=created.tenant_id)
 
 
 class BusinessRow(BaseModel):

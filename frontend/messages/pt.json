@@ -379,6 +379,15 @@
         "incomplete_expired": "Incompleta, expirada",
         "paused": "Em pausa"
       }
+    },
+    "createBusiness": {
+      "title": "Criar negócio",
+      "lede": "Use um endereço de e-mail separado para o proprietário. Ele receberá um link para definir a senha. Sua conta de administrador não fará parte do negócio.",
+      "ownerName": "Nome do proprietário",
+      "exists": "Este endereço já tem uma conta. Use um novo endereço de e-mail para o proprietário.",
+      "done": "Negócio criado",
+      "sent": "O e-mail para o proprietário definir a senha está na fila de envio. O link expira 15 minutos após o envio. Se expirar, o proprietário pode usar “Esqueceu a senha?” na página de login. O negócio usa as configurações habituais de plano e período de teste.",
+      "view": "Ver negócio"
     }
   },
   "ForgotPassword": {

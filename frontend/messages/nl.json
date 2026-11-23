@@ -379,6 +379,15 @@
         "incomplete_expired": "Onvolledig, verlopen",
         "paused": "Gepauzeerd"
       }
+    },
+    "createBusiness": {
+      "title": "Bedrijf aanmaken",
+      "lede": "Gebruik een apart e-mailadres voor de eigenaar. De eigenaar ontvangt een link om een wachtwoord in te stellen. Je beheerdersaccount wordt geen lid van het bedrijf.",
+      "ownerName": "Naam van de eigenaar",
+      "exists": "Dit adres heeft al een account. Gebruik een nieuw e-mailadres voor de eigenaar.",
+      "done": "Bedrijf aangemaakt",
+      "sent": "Er staat een e-mail klaar waarmee de eigenaar een wachtwoord kan instellen. De link verloopt 15 minuten na verzending. Daarna kan de eigenaar “Wachtwoord vergeten” op de inlogpagina gebruiken. Het bedrijf gebruikt de gebruikelijke abonnements- en proefinstellingen.",
+      "view": "Bedrijf bekijken"
     }
   },
   "ForgotPassword": {
