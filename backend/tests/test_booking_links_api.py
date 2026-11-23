@@ -1313,7 +1313,9 @@ def test_reschedule_into_time_off_a_buffer_tail_or_past_the_horizon_is_slot_unav
     time_off = post(client, "/reschedule", reschedule_body(booking_id, at("10:00", next_day), 0))
     buffer_tail = post(client, "/reschedule", reschedule_body(booking_id, at("14:30"), 0))
     assert put_settings(owner, {"booking_horizon_days": 1}).status_code == 200
-    horizon = post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0))
+    # Beyond tomorrow after a midnight rollover, and past next_day's time off above.
+    beyond = at("11:00", DAY + timedelta(days=2))
+    horizon = post(client, "/reschedule", reschedule_body(booking_id, beyond, 0))
 
     for answer in (time_off, buffer_tail, horizon):
         assert (answer.status_code, answer.json()) == (409, {"code": "slot_unavailable"})
