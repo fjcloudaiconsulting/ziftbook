@@ -3541,6 +3541,8 @@ def test_0112_round_trips_the_payment_snapshot_contract(
         with migrate_engine.connect() as conn:
             original_function = tuple(conn.execute(function).one())
             original_trigger = conn.scalar(trigger)
+        command.upgrade(cfg, m.down_revision)
+        with migrate_engine.connect() as conn:
             original_table = tuple(conn.execute(table).one())
         window = _seed_booking(people, days=10)
         with tenant_context(people.a) as session:
