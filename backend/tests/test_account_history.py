@@ -213,12 +213,13 @@ def copy_booking(migrate_engine: Engine, tenant: uuid.UUID, starts_at: str, **co
             INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
               status, expires_at, source, service_name, price_amount_minor, price_currency,
               duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
-              reschedule_cutoff_hours, booked_as, checkout_hash)
+              reschedule_cutoff_hours, booked_as, checkout_hash, payment_rule, payment_due_minor)
             SELECT tenant_id, client_id, worker_id, service_id, CAST(:s AS timestamptz),
               CAST(:s AS timestamptz) + interval '30 minutes', :status, now() + interval '1 hour',
               source, service_name, price_amount_minor, price_currency, duration_minutes,
               auto_confirm_at_booking, free_cancellation_hours, reschedule_cutoff_hours, booked_as,
-              :checkout_hash
+              :checkout_hash, CASE WHEN :status = 'awaiting_payment' THEN 'choice' END,
+              CASE WHEN :status = 'awaiting_payment' THEN price_amount_minor END
             FROM bookings LIMIT 1
             """),
             {"s": starts_at, **columns},

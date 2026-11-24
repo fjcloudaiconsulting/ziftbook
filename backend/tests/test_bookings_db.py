@@ -105,9 +105,19 @@ def insert_booking(
     earliest_starts_at: datetime | None = None,
     max_reschedules: int = 2,
     reschedule_count: int = 0,
+    payment_rule: str | None = None,
+    payment_due_minor: int | None = None,
 ) -> uuid.UUID:
+    # Historical migration tests also insert before 0102 added these columns.
+    statement = str(INSERT_BOOKING)
+    if payment_rule is not None or payment_due_minor is not None:
+        statement = statement.replace(
+            "expires_at, source,", "expires_at, source, payment_rule, payment_due_minor,"
+        ).replace(
+            ":expires_at, :source,", ":expires_at, :source, :payment_rule, :payment_due_minor,"
+        )
     booking_id: uuid.UUID = session.scalar(
-        INSERT_BOOKING,
+        text(statement),
         {
             "client_id": client_id,
             "worker_id": worker_id,
@@ -115,6 +125,8 @@ def insert_booking(
             "starts_at": starts_at,
             "ends_at": ends_at,
             "status": status,
+            "payment_rule": payment_rule,
+            "payment_due_minor": payment_due_minor,
             "expires_at": expires_at,
             "source": source,
             "service_name": json.dumps({"en": "Cut"}),
@@ -876,6 +888,8 @@ def test_booking_evidence_a_checkout_still_becomes_a_pending(people: People) -> 
         starts_at=T6[0],
         ends_at=T6[1],
         status="awaiting_payment",
+        payment_rule="choice",
+        payment_due_minor=2500,
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
 

@@ -76,6 +76,8 @@ def test_a_due_awaiting_payment_expires_as_well(people: People) -> None:
         people.both,
         T2,
         status="awaiting_payment",
+        payment_rule="choice",
+        payment_due_minor=2500,
         expires_at=datetime.now(UTC) - HOUR,
     )
 
