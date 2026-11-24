@@ -16,7 +16,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pydantic import SecretStr, ValidationError
 
-from app.config import GoogleCalendarSettings
+from app.config import GoogleCalendarKeySettings
 
 VERSION = 1
 Purpose = Literal["calendar-token", "calendar-attempt"]
@@ -65,7 +65,7 @@ def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
 def keyring() -> Keyring | None:
     """Invalid, duplicate, noncanonical or missing keys disable crypto, including old-key reads."""
     try:
-        settings = GoogleCalendarSettings()
+        settings = GoogleCalendarKeySettings()
         values = json.loads(
             settings.google_calendar_keks.get_secret_value(), object_pairs_hook=_unique
         )

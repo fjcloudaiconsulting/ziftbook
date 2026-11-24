@@ -10,7 +10,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app import calendar_crypto as crypto
-from app.config import GoogleCalendarSettings
+from app.config import GoogleCalendarKeySettings, GoogleCalendarSettings
 
 KEY = base64.b64encode(b"old-key-sentinel".ljust(32, b"!")).decode()
 NEW_KEY = base64.b64encode(b"new-key-sentinel".ljust(32, b"!")).decode()
@@ -171,7 +171,7 @@ def test_secrets_are_absent_from_repr_logs_and_displayed_exception_chains(
         repr(envelope.wrapped_dek),
     ]
     shown = repr(envelope) + repr(crypto.keyring()) + repr(secret_values())
-    shown += repr(GoogleCalendarSettings())
+    shown += repr(GoogleCalendarKeySettings()) + repr(GoogleCalendarSettings())
     monkeypatch.setenv("ZIF_GOOGLE_CALENDAR_KEKS", "keyring-sentinel")
     with pytest.raises(crypto.CalendarCryptoError) as raised:
         crypto.decrypt(envelope, binding)
@@ -191,6 +191,27 @@ def test_unset_calendar_config_is_optional_and_never_reuses_totp(
     assert settings.request_budget == 60
     assert settings.request_budget_valid
     assert crypto.keyring() is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("ZIF_GOOGLE_CALENDAR_REDIRECT_URI", "https://other.test/api/google-calendar/callback"),
+        ("ZIF_GOOGLE_CALENDAR_CONNECT_ENABLED", "sometimes"),
+    ],
+)
+def test_invalid_enrollment_config_keeps_decryption_and_rewrap_available(
+    name: str, value: str, binding: crypto.Binding, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    envelope = crypto.encrypt(secret_values(), binding)
+    keys = crypto.keyring()
+    monkeypatch.setenv("ZIF_APP_URL", "https://example.test")
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValidationError):
+        GoogleCalendarSettings()
+    assert crypto.keyring() == keys
+    assert crypto.decrypt(envelope, binding) == secret_values()
+    assert crypto.decrypt(crypto.rewrap(envelope, binding), binding) == secret_values()
 
 
 @pytest.mark.parametrize(

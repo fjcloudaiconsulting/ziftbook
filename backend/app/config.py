@@ -100,16 +100,21 @@ class SecondFactorSettings(Settings):
     totp_key: SecretStr = SecretStr("")
 
 
-class GoogleCalendarSettings(Settings):
-    """Read lazily: absent or invalid Calendar configuration never prevents process startup."""
+class GoogleCalendarKeySettings(Settings):
+    """Cleanup can decrypt even when enrollment configuration is invalid."""
 
     model_config = SettingsConfigDict(hide_input_in_errors=True)
+
+    google_calendar_keks: SecretStr = SecretStr("")
+    google_calendar_active_key_id: str = ""
+
+
+class GoogleCalendarSettings(GoogleCalendarKeySettings):
+    """Read lazily: absent or invalid Calendar configuration never prevents process startup."""
 
     google_calendar_client_id: str = ""
     google_calendar_client_secret: SecretStr = SecretStr("")
     google_calendar_redirect_uri: str = ""
-    google_calendar_keks: SecretStr = SecretStr("")
-    google_calendar_active_key_id: str = ""
     google_calendar_connect_enabled: bool = False
     # Kept as text so a malformed budget cannot stop cleanup; the scheduler validates it lazily.
     google_calendar_requests_per_minute: str = "60"
