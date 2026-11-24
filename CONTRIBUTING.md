@@ -1188,8 +1188,9 @@ first, then to `nl` and `pt` with the same `{placeholders}`; `node scripts/check
 
 Frontend lint also runs `frontend/scripts/check-code-strings.mjs` over `frontend/lib` and `frontend/app`.
 It catches prose in string literals, template pieces and concatenations, including common UI text fields.
-It uses TypeScript syntax and token shape, not data-flow analysis: an unlabelled lowercase identifier-shaped
-word may still be a machine key. JSX text remains covered by `react/jsx-no-literals`.
+It uses TypeScript syntax and token shape, not data-flow analysis: unlabelled identifier-shaped words,
+lowercase kebab/dotted tokens and all-capital codes may still be machine keys. Intrinsic `data-*` attributes
+are treated as machine data; do not use them for visible copy. JSX text remains covered by `react/jsx-no-literals`.
 
 Put prose in the message catalogs. A justified machine string can use `// i18n-allow: <reason>` on its line
 or the immediately preceding line. Inside a JSX expression, use `/* i18n-allow: <reason> */` beside the literal.

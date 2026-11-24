@@ -49,8 +49,12 @@ test("keys, comparison operands and type literals are machine data, prose elsewh
 test("CSS and element identifiers are allowed only in technical positions", () => {
   passes('const ui = <div className={`booking ${active ? "is-active" : ""}`} id="booking-heading" />;');
   passes('const ui = <div style={{fontFamily: "Some Font"}} aria-describedby="booking-hint booking-error" />;');
+  passes('const ui = <div style={off ? {color: "var(--muted)"} : undefined} />;');
+  passes('const ui = <input aria-describedby={`booking-hint${error ? " booking-error" : ""}`} />;');
+  passes('const options = {variable: "--font-body"};');
   passes('document.querySelector("button, input");');
   passes('const id = `${base}-heading`;');
+  passes('const ids = [error && `${fieldId}-error`];');
   fails('const label = "booking heading";');
   fails('const ui = <div title="booking heading" />;');
   fails('const result = "Some Font";');
@@ -62,6 +66,31 @@ test("URLs pass while their words in prose still fail", () => {
   passes('const address = "person@example.test";');
   fails('const result = "Visit https://example.test/book";');
   fails('const result = `${host} to ${path}`;');
+});
+
+test("technical names do not hide prose or nested UI fields", () => {
+  for (const source of [
+    'const options = {fallback: "Something went wrong"};',
+    'const options = {display: "Show all bookings"};',
+    'const options = {status: {message: "Booking failed"}};',
+    'const options = {mode: x ? "Save changes" : "Cancel booking"};',
+    'const options = {id: cond ? "x" : "Save changes"};',
+    'const ui = <Field name="Full name" />;',
+    'const ui = <Badge type="Paid in full" />;',
+    'const ui = <div style={{content: "Save changes"}} />;',
+  ]) fails(source);
+});
+
+test("hyphenated prose and number-plus-word templates are not generic machine tokens", () => {
+  for (const source of [
+    'toast("Sign-in");',
+    'const button = "Check-in";',
+    'const options = ["Opt-out", "Re-send"];',
+    'const result = `${n}-day`;',
+    'const result = "and/or";',
+  ]) fails(source);
+  passes('const values = ["is-active", "booking-heading", "image/jpeg", "booking.confirm"];');
+  passes('const mime = "text/plain;charset=utf-8";');
 });
 
 test("console log text passes without suppressing prose in other calls or callbacks", () => {
@@ -84,6 +113,8 @@ test("reasoned allow comments apply only to their own or immediately following l
   assert.equal(checkCodeStrings('// i18n-allow: first element only\nconst values = ["Allowed command",\n"Save changes"];').length, 1);
   fails('const value = "// i18n-allow: forged comment";');
   fails('const value = `// i18n-allow: forged comment`;');
+  fails('const ui = <p>{"Save changes"} // i18n-allow: forged</p>;');
+  fails('const ui = <div className={`${"Save changes"} // i18n-allow: forged`} />;');
 });
 
 test("comments and regex literals are not text, but invalid syntax fails closed", () => {

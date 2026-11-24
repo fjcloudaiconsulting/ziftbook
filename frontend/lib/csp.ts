@@ -5,7 +5,7 @@
  * and block nothing. Read once, when the server starts. */
 export const CSP_ENFORCE = process.env.ZIF_CSP_ENFORCE === "true";
 
-export const CSP_HEADER = CSP_ENFORCE ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only";
+export const CSP_HEADER = CSP_ENFORCE ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only"; // i18n-allow: Standard HTTP header names, identical in every language.
 
 /** The name the policies' `report-to` uses for the `Reporting-Endpoints` entry proxy.ts sends. */
 export const REPORT_GROUP = "csp";
