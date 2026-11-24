@@ -99,7 +99,7 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
     );
   }
 
-  const describedBy = `${reasonId}-hint${reasonError ? ` ${reasonId}-error` : ""}`;
+  const describedBy = `${reasonId}-hint${reasonError ? ` ${reasonId}-error` : ""}`; // i18n-allow: ARIA description element identifiers.
   return (
     <div
       className={suspended ? styles.confirm : styles.dangerZone}

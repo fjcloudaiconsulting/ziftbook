@@ -7,14 +7,14 @@ export const PLACEHOLDERS: Placeholder[] = ["generic", "nails", "hair", "beauty"
 // (a short word that starts unrelated ones: "gel" in "gelaatsbehandeling", a facial). Migration
 // 0040 holds a frozen copy for its one-time backfill.
 const WORDS: [Placeholder, string[]][] = [
-  ["nails", ["nail", "mani", "pedi", "gel$", "gelnagel", "polish", "acryl", "shellac", "nagel", "gellak", "lak$", "unha", "esmalte", "alongamento"]],
+  ["nails", ["nail", "mani", "pedi", "gel$", "gelnagel", "polish", "acryl", "shellac", "nagel", "gellak", "lak$", "unha", "esmalte", "alongamento"]], // i18n-allow: Search patterns for classifying service names, never displayed.
   [
     "hair",
     ["hair", "haircut", "trim", "colour", "color", "blow", "highlight", "beard", "haar", "knip", "kleur", "fohn", "baard", "cabelo", "corte", "escova", "coloracao", "mechas", "barba"],
   ],
   [
     "beauty",
-    ["brow", "lash", "facial", "face", "make-up", "makeup", "wax", "wenkbrauw", "wimper", "gezicht", "gelaat", "harsen", "sobrancelha", "cilio", "limpeza de pele", "rosto", "maquiagem", "depilacao"],
+    ["brow", "lash", "facial", "face", "make-up", "makeup", "wax", "wenkbrauw", "wimper", "gezicht", "gelaat", "harsen", "sobrancelha", "cilio", "limpeza de pele", "rosto", "maquiagem", "depilacao"], // i18n-allow: Search patterns for classifying service names, never displayed.
   ],
   ["massage", ["massage", "massagem"]],
 ];

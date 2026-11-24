@@ -31,7 +31,7 @@ export function generateStaticParams() {
 
 export async function generateMetadata() {
   const t = await getTranslations("Metadata");
-  return { title: { default: t("title"), template: `%s · ${t("title")}` }, description: t("description") };
+  return { title: { default: t("title"), template: `%s · ${t("title")}` }, description: t("description") }; // i18n-allow: Page-title placeholder syntax around an already translated title.
 }
 
 export default async function LocaleLayout({ children, params }: LayoutProps<"/[locale]">) {

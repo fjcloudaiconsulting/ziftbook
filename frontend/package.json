@@ -7,7 +7,7 @@
     "dev": "openapi-ts -s && next dev",
     "build": "openapi-ts -s && next build",
     "start": "next start",
-    "lint": "eslint --max-warnings 0",
+    "lint": "eslint --max-warnings 0 && node scripts/check-code-strings.mjs",
     "typecheck": "openapi-ts -s && next typegen && tsc --noEmit",
     "test": "node --test \"tests/*.test.mjs\""
   },

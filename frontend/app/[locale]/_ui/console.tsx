@@ -34,8 +34,8 @@ import uiStyles from "./ui.module.css";
 export { JSON_WRITE } from "./parts";
 
 // The shell's sticky bars, measured for the scroll padding that keeps keyboard focus clear of them.
-const topbarHeight = stickyHeight("--topbar-height");
-const bottombarHeight = stickyHeight("--bottombar-height");
+const topbarHeight = stickyHeight("--topbar-height"); // i18n-allow: CSS custom property name.
+const bottombarHeight = stickyHeight("--bottombar-height"); // i18n-allow: CSS custom property name.
 
 type ConsoleContextValue = {
   session: SessionOut;
@@ -70,7 +70,7 @@ const ConsoleContext = createContext<ConsoleContextValue | null>(null);
 
 export function useConsole(): ConsoleContextValue {
   const value = useContext(ConsoleContext);
-  if (!value) throw new Error("useConsole must be used inside Shell");
+  if (!value) throw new Error("useConsole must be used inside Shell"); // i18n-allow: Developer context invariant, never rendered as UI text.
   return value;
 }
 

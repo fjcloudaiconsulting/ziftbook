@@ -122,7 +122,7 @@ export function TicketStep({
               autoComplete="off"
               autoCapitalize="characters"
               spellCheck={false}
-              placeholder="XXXX-XXXX-XXXX-XXXX"
+              placeholder={/* i18n-allow: Recovery code format, identical in every language. */ "XXXX-XXXX-XXXX-XXXX"}
               maxLength={40}
               required
               value={ticket}

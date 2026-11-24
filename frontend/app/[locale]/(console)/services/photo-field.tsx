@@ -23,7 +23,7 @@ export type PhotoField =
 
 export type PhotoError = FileError | { code: "unreadable" | "uploadFailed" | "early" };
 
-const ACCEPT = "image/jpeg,image/png,image/webp";
+const ACCEPT = "image/jpeg,image/png,image/webp"; // i18n-allow: MIME types accepted by the file input.
 
 /** The browser's PUT straight to storage: XHR, not fetch, for the upload progress. */
 function put(url: string, headers: Record<string, string>, file: File, onProgress: (percent: number) => void, holder: { current: XMLHttpRequest | null }) {

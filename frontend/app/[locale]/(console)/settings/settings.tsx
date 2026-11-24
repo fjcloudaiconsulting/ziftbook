@@ -270,7 +270,7 @@ export function Settings() {
     // Empty the live region first: a second "Copied" into an unchanged region isn't announced.
     setCopyState("idle");
     try {
-      if (!navigator.clipboard) throw new Error("no clipboard");
+      if (!navigator.clipboard) throw new Error("no clipboard"); // i18n-allow: Caught locally; the UI uses translated copy-state messages.
       await navigator.clipboard.writeText(address);
       setCopyState("copied");
     } catch {

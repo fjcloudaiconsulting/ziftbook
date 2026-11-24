@@ -93,7 +93,7 @@ export function WriteForm({
     recheck.start();
   }
 
-  const describedBy = `${reasonId}-hint${reasonError ? ` ${reasonId}-error` : ""}`;
+  const describedBy = `${reasonId}-hint${reasonError ? ` ${reasonId}-error` : ""}`; // i18n-allow: ARIA description element identifiers.
   return (
     <div className={danger ? styles.dangerZone : styles.confirm} role="group" aria-labelledby={titleId} aria-describedby={phase === "code" ? recheck.ledeId : undefined}>
       {recheck.banners}
