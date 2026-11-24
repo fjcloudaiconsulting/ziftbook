@@ -2,6 +2,7 @@
 
 import threading
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -29,8 +30,18 @@ from tests.conftest import (
     signed_in,
     wait_until_blocked,
 )
+from tests.test_calendar_db import insert_connection
 
 WIDE = {"from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"}
+
+
+@pytest.fixture
+def people(people: People, migrate_engine: Engine) -> Iterator[People]:
+    yield people
+    for tenant in (people.a, people.b):
+        with migrate_tenant_context(migrate_engine, tenant) as conn:
+            conn.execute(text("DELETE FROM time_off WHERE source = 'google'"))
+            conn.execute(text("DELETE FROM google_calendar_connections"))
 
 
 @pytest.fixture
@@ -72,13 +83,15 @@ def insert_block(
     reason: str | None = None,
     source: str = "manual",
     external_id: str | None = None,
+    calendar_connection_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     with tenant_context(tenant_id) as session:
         found: uuid.UUID = session.scalar(
             text("""
             INSERT INTO time_off
-                (tenant_id, member_id, starts_at, ends_at, reason, source, external_id)
-            VALUES (:t, :m, :s, :e, :r, :src, :ext)
+                (tenant_id, member_id, starts_at, ends_at, reason, source, external_id,
+                 calendar_connection_id)
+            VALUES (:t, :m, :s, :e, :r, :src, :ext, :connection)
             RETURNING id
             """),
             {
@@ -89,19 +102,35 @@ def insert_block(
                 "r": reason,
                 "src": source,
                 "ext": external_id,
+                "connection": calendar_connection_id,
             },
         )
     return found
 
 
+def calendar_connection(tenant_id: uuid.UUID, member: uuid.UUID) -> uuid.UUID:
+    with tenant_context(tenant_id) as session:
+        found: uuid.UUID | None = session.scalar(
+            text("SELECT id FROM google_calendar_connections WHERE member_id = :m"), {"m": member}
+        )
+        if found is not None:
+            return found
+        user: uuid.UUID = session.execute(
+            text("SELECT user_id FROM memberships WHERE id = :m"), {"m": member}
+        ).scalar_one()
+        return insert_connection(session, tenant_id, member, user)
+
+
 def google(tenant_id: uuid.UUID, member: uuid.UUID, external_id: str = "evt-1") -> uuid.UUID:
+    connection = calendar_connection(tenant_id, member)
     return insert_block(
         tenant_id,
         member,
         "2026-11-01T00:00:00Z",
         "2026-11-02T00:00:00Z",
         source="google",
-        external_id=external_id,
+        external_id=f"{connection}:{external_id}",
+        calendar_connection_id=connection,
     )
 
 
@@ -826,6 +855,7 @@ def test_direct_inserts_hit_the_database_checks(
     constraint: str,
 ) -> None:
     only_a_member = member_id(people.a, people.only_a)
+    connection = calendar_connection(people.a, only_a_member) if source == "google" else None
 
     with pytest.raises(IntegrityError) as exc_info:
         insert_block(
@@ -836,6 +866,7 @@ def test_direct_inserts_hit_the_database_checks(
             reason=reason,
             source=source,
             external_id=external_id,
+            calendar_connection_id=connection,
         )
 
     assert isinstance(exc_info.value.orig, pg_errors.CheckViolation)
@@ -1222,8 +1253,8 @@ def test_list_order_is_by_effective_start_amsterdam(people: People, app: FastAPI
     ]
 
 
-# 22. guard: reason visibility, Google rows read-only, audit events and member-removal cascade are
-# the same for a day row as for a partial one.
+# 22. guard: manual day rows preserve visibility, audit and cascade behavior. Google rows stay
+# read-only and must be instants; they cannot become whole-day rows.
 def test_a_day_block_behaves_like_a_partial_one_for_visibility_audit_and_cascade(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -1244,7 +1275,7 @@ def test_a_day_block_behaves_like_a_partial_one_for_visibility_audit_and_cascade
     cascaded = day_block(owner, only_a_member).json()  # this one belongs to the removed member
 
     google_id = google(people.a, only_a_member, external_id="day-evt")
-    with tenant_context(people.a) as session:
+    with pytest.raises(IntegrityError) as refused, tenant_context(people.a) as session:
         session.execute(
             text(
                 "UPDATE time_off SET first_day = '2026-12-01', last_day = '2026-12-02', "
@@ -1252,12 +1283,21 @@ def test_a_day_block_behaves_like_a_partial_one_for_visibility_audit_and_cascade
             ),
             {"id": google_id},
         )
+    assert isinstance(refused.value.orig, pg_errors.CheckViolation)
+    assert refused.value.orig.diag.constraint_name == "ck_time_off_google_shape"
     assert owner.patch(block_path(google_id), json={"reason": "nope"}).status_code == 404
     assert owner.request("DELETE", block_path(google_id), json={}).status_code == 404
 
     before = events(migrate_engine, tenant_id=people.a, action="time_off_created")
     assert len(before) >= 1
 
+    # Credentials restrict identity deletion; this fixture cleans them before the manual cascade.
+    with tenant_context(people.a) as session:
+        session.execute(text("DELETE FROM time_off WHERE id = :id"), {"id": google_id})
+        session.execute(
+            text("DELETE FROM google_calendar_connections WHERE member_id = :m"),
+            {"m": only_a_member},
+        )
     # As the migrate role: the app role has no DELETE on memberships (ZB-10).
     with migrate_tenant_context(migrate_engine, people.a) as conn:
         conn.execute(text("DELETE FROM memberships WHERE id = :id"), {"id": only_a_member})

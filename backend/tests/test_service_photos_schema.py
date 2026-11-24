@@ -44,6 +44,17 @@ ALLOWED = [
     "bookings.checkout_hash",
     "contact_email_requests.token_hash",  # ZIF-232: a confirmation link's sha256
     "email_tokens.token_hash",
+    # Calendar envelope ciphertext, nonces, wrapped keys and credential hashes, never media.
+    "google_calendar_connections.ciphertext",
+    "google_calendar_connections.payload_nonce",
+    "google_calendar_connections.wrap_nonce",
+    "google_calendar_connections.wrapped_dek",
+    "google_calendar_oauth_attempts.ciphertext",
+    "google_calendar_oauth_attempts.payload_nonce",
+    "google_calendar_oauth_attempts.session_hash",
+    "google_calendar_oauth_attempts.state_hash",
+    "google_calendar_oauth_attempts.wrap_nonce",
+    "google_calendar_oauth_attempts.wrapped_dek",
     "invites.token_hash",
     "second_factors.proof_hash",
     "second_factors.recovery_code_hashes",
