@@ -20,32 +20,32 @@ export type PayHandle = {
 
 /** A token colour as sRGB: Stripe's appearance does not read oklch(), a canvas does. */
 function rgb(value: string): string {
-  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true }); // i18n-allow: Canvas context identifier.
   if (!ctx) return "#000000";
   ctx.clearRect(0, 0, 1, 1);
   ctx.fillStyle = value.trim();
   ctx.fillRect(0, 0, 1, 1);
   const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-  return `rgb(${r}, ${g}, ${b})`;
+  return `rgb(${r}, ${g}, ${b})`; // i18n-allow: CSS color syntax.
 }
 
 /** The Element drawn with the app's tokens (no Stripe default blue). */
 function appearance(): Appearance {
   const root = getComputedStyle(document.documentElement);
   const token = (name: string) => rgb(root.getPropertyValue(name));
-  const primary = token("--primary");
+  const primary = token("--primary"); // i18n-allow: CSS custom property name.
   return {
     variables: {
       colorPrimary: primary,
-      colorText: token("--ink"),
-      colorDanger: token("--error"),
-      colorBackground: token("--bg"),
+      colorText: token("--ink"), // i18n-allow: CSS custom property name.
+      colorDanger: token("--error"), // i18n-allow: CSS custom property name.
+      colorBackground: token("--bg"), // i18n-allow: CSS custom property name.
       borderRadius: "0.75rem",
       // next/font's hashed family does not exist inside Stripe's iframe, and a web font from another
       // origin would tell it who visits: a system stack, the nearest grotesque the device has.
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', // i18n-allow: CSS font family names.
     },
-    rules: { ".Input:focus": { borderColor: primary, boxShadow: `0 0 0 2px ${primary}`, outline: "none" } },
+    rules: { ".Input:focus": { borderColor: primary, boxShadow: `0 0 0 2px ${primary}`, outline: "none" } }, // i18n-allow: CSS shadow syntax.
   };
 }
 

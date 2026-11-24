@@ -13,13 +13,13 @@ export type Format = (typeof FORMATS)[number];
 export function parseLevel(value: string | undefined): Level {
   if (value === undefined || value === "") return "INFO";
   if ((LEVELS as readonly string[]).includes(value)) return value as Level;
-  throw new Error("ZIF_LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR");
+  throw new Error("ZIF_LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR"); // i18n-allow: Server configuration diagnostic, never rendered.
 }
 
 export function parseFormat(value: string | undefined): Format {
   if (value === undefined || value === "") return "json";
   if ((FORMATS as readonly string[]).includes(value)) return value as Format;
-  throw new Error("ZIF_LOG_FORMAT must be one of json, text");
+  throw new Error("ZIF_LOG_FORMAT must be one of json, text"); // i18n-allow: Server configuration diagnostic, never rendered.
 }
 
 const RESERVED = new Set(["ts", "level", "logger", "msg"]);
@@ -29,9 +29,9 @@ const RESERVED = new Set(["ts", "level", "logger", "msg"]);
 // newline), so all of them get a \uXXXX escape instead of passing through.
 function escape(value: string): string {
   return value
-    .replace(/\r/g, "\\r")
-    .replace(/\n/g, "\\n")
-    .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`);
+    .replace(/\r/g, "\\r") // i18n-allow: Escaped control character in machine logs.
+    .replace(/\n/g, "\\n") // i18n-allow: Escaped control character in machine logs.
+    .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`); // i18n-allow: Unicode escape syntax in machine logs.
 }
 
 export function format(
@@ -94,7 +94,7 @@ type ExcLink = { type: string; code?: string; frames: string[] };
 
 function errorType(e: unknown): string {
   if (e instanceof DOMException) return e.name;
-  if (e instanceof Error) return e.constructor?.name || "Error";
+  if (e instanceof Error) return e.constructor?.name || "Error"; // i18n-allow: JavaScript exception class name in machine logs.
   return typeof e;
 }
 

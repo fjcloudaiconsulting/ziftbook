@@ -26,7 +26,7 @@ export function CopyButton({ text, label, target }: { text: string; label: strin
     clearTimeout(timer.current);
     let next: "copied" | "failed" = "copied";
     try {
-      if (!navigator.clipboard) throw new Error("no clipboard");
+      if (!navigator.clipboard) throw new Error("no clipboard"); // i18n-allow: Caught locally; the UI uses translated copy-state messages.
       await navigator.clipboard.writeText(text);
     } catch {
       next = "failed";
@@ -60,7 +60,7 @@ export function CopyButton({ text, label, target }: { text: string; label: strin
 export function EnrolCommand({ email }: { email: string }) {
   const t = useTranslations("Admin");
   // The command itself is never translated; only the placeholder for the reason is.
-  const reason = `--reason "${t("reasonPlaceholder")}"`;
+  const reason = `--reason "${t("reasonPlaceholder")}"`; // i18n-allow: Executable command option syntax; translating it would break the command.
   const head = enrolCommand(email);
   const code = useRef<HTMLElement>(null);
   return (
@@ -127,7 +127,7 @@ export function CodeField({
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}
-            placeholder="XXXX-XXXX-XXXX-XXXX"
+            placeholder={/* i18n-allow: Recovery code format, identical in every language. */ "XXXX-XXXX-XXXX-XXXX"}
             maxLength={40}
             required
             value={value}

@@ -96,7 +96,7 @@ export function startProxySpan(method: string): Span {
   const span = provider()
     .getTracer("ziftbook-web")
     .startSpan(
-      `${method} /api`,
+      `${method} /api`, // i18n-allow: Telemetry span name, never displayed to users.
       { kind: SpanKind.SERVER, attributes: { "http.request.method": method, "http.route": "/api/:path*" } },
       ROOT_CONTEXT,
     );

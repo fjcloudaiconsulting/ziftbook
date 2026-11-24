@@ -8,7 +8,7 @@ import { Submit } from "./parts";
 import uiStyles from "./ui.module.css";
 
 // The phone instance needs none: it sits inside the shell's bottom bar, which is measured whole.
-const savebarHeight = stickyHeight("--savebar-height");
+const savebarHeight = stickyHeight("--savebar-height"); // i18n-allow: CSS custom property name.
 
 /**
  * The sticky bottom bar of a form (week editor, settings): a hint, an optional Undo, and Save,

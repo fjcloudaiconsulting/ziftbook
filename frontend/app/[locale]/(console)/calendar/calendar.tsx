@@ -300,7 +300,7 @@ export function Calendar() {
   );
   const closedToday = view.view === "day" && closedDay(data?.opening ?? [], weekdayOf(view.date));
 
-  const top = (minutes: number) => `calc(var(--hour) * ${(minutes - hours.from * 60) / 60})`;
+  const top = (minutes: number) => `calc(var(--hour) * ${(minutes - hours.from * 60) / 60})`; // i18n-allow: CSS calculation for calendar positioning.
 
   function blockText(item: Extract<Item, { kind: "block" }>) {
     const reason = item.block.reason;
@@ -315,7 +315,7 @@ export function Calendar() {
     const end = Math.min(slice.end, hours.to * 60);
     if (end <= start) return null;
     const bottom = Math.min(cell.until, hours.to * 60);
-    const place: CSSProperties = { top: top(start), height: `calc(var(--hour) * ${(bottom - start) / 60})` };
+    const place: CSSProperties = { top: top(start), height: `calc(var(--hour) * ${(bottom - start) / 60})` }; // i18n-allow: CSS calculation for calendar positioning.
     if (item.kind === "block") {
       const text = blockText(item);
       const reason = item.block.reason;
@@ -358,7 +358,7 @@ export function Calendar() {
     ]
       .filter(Boolean)
       .join(", ");
-    const width: CSSProperties = { left: `calc(100% * ${cell.lane} / ${cell.of} + 2px)`, width: `calc(100% / ${cell.of} - 4px)` };
+    const width: CSSProperties = { left: `calc(100% * ${cell.lane} / ${cell.of} + 2px)`, width: `calc(100% / ${cell.of} - 4px)` }; // i18n-allow: CSS calculations for calendar positioning.
     const tail = bottom - end; // minutes of the interval drawn under the booking
     const icon = chip && booking.status !== "confirmed" && (
       <span className={css.ico} aria-hidden="true">

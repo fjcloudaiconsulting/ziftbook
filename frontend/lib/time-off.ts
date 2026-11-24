@@ -231,7 +231,7 @@ export function blockLabel(block: Block, tz: string): BlockLabel {
     return { kind: "range", from: block.first_day, to: block.last_day, days: inclusiveDays(block.first_day, block.last_day) };
   }
   const startsAt = block.starts_at;
-  if (startsAt === null || block.ends_at === null) throw new Error("a block has neither pair filled in");
+  if (startsAt === null || block.ends_at === null) throw new Error("a block has neither pair filled in"); // i18n-allow: Malformed block invariant diagnostic, never rendered as UI text.
   const start = localDateISO(new Date(startsAt), tz);
   const end = localDateISO(new Date(block.ends_at), tz);
   const times = { start: localTime(startsAt, tz), end: localTime(block.ends_at, tz) };

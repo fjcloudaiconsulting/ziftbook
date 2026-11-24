@@ -15,9 +15,9 @@ const CURRENCY = { style: "currency", currencyDisplay: "narrowSymbol" } as const
 let known: Set<string> | undefined; // Intl's currency codes, read once
 export function minorUnits(currency: string): number {
   known ??= new Set(Intl.supportedValuesOf("currency"));
-  if (!known.has(currency)) throw new Error(`unknown currency ${currency}`);
+  if (!known.has(currency)) throw new Error(`unknown currency ${currency}`); // i18n-allow: Invalid currency invariant diagnostic, never rendered as UI text.
   const digits = new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits;
-  if (digits === undefined) throw new Error(`unknown currency ${currency}`);
+  if (digits === undefined) throw new Error(`unknown currency ${currency}`); // i18n-allow: Invalid currency invariant diagnostic, never rendered as UI text.
   return digits;
 }
 

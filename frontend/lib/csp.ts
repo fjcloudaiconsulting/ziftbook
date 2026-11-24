@@ -52,7 +52,7 @@ export function reportUrlFor(host: string | null | undefined, reportUrl: string 
 
 /** The reporting directives for a policy: both forms, as browsers support one or the other. */
 export function reportingDirectives(reportUrl: string | null): string[] {
-  return reportUrl ? [`report-uri ${reportUrl}`, `report-to ${REPORT_GROUP}`] : [];
+  return reportUrl ? [`report-uri ${reportUrl}`, `report-to ${REPORT_GROUP}`] : []; // i18n-allow: CSP directive syntax interpreted by browsers.
 }
 
 /** The web server's startup fields for the policy, never the report URL; `refused` when ZIF_CSP_REPORT_URL is set
@@ -85,7 +85,7 @@ export function originOf(value: string | undefined): string | null {
 }
 
 // Stripe's Link: its sign-in frames and their calls (Stripe's CSP guide, "Link").
-const LINK = "https://link.com https://*.link.com";
+const LINK = "https://link.com https://*.link.com"; // i18n-allow: CSP directive syntax interpreted by browsers.
 
 /**
  * The policy for one page. Scripts run only with the page's nonce, or when a script that had it loaded them
@@ -103,24 +103,24 @@ export function cspFor(
   return [
     // Also styles and fonts: Next links its CSS and fonts from this site, React applies `style` props from
     // script (no style attribute is in a page's HTML), and Stripe.js and Turnstile style their elements the same way.
-    "default-src 'self'",
+    "default-src 'self'", // i18n-allow: CSP directive syntax interpreted by browsers.
     // The hosts only matter to a browser without 'strict-dynamic', which falls back to them; *.js.stripe.com
     // is on Stripe's documented Stripe.js list.
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://js.stripe.com https://*.js.stripe.com https://challenges.cloudflare.com${dev ? " 'unsafe-eval'" : ""}`,
-    ...(dev ? ["style-src 'self' 'unsafe-inline'"] : []),
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://js.stripe.com https://*.js.stripe.com https://challenges.cloudflare.com${dev ? " 'unsafe-eval'" : ""}`, // i18n-allow: CSP directive syntax interpreted by browsers.
+    ...(dev ? ["style-src 'self' 'unsafe-inline'"] : []), // i18n-allow: CSP directive syntax interpreted by browsers.
     // *.js.stripe.com: Stripe.js starts some of its frames on other js.stripe.com origins (Stripe's documented
     // list). link.com: Stripe's Link, which the Payment Element can offer on "Pay now", whose payment methods
     // are dynamic (lib/booking-page.ts elementsOptions, the API's automatic_payment_methods); Stripe's CSP
     // guide lists these frame, connect and image sources for it.
-    `frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com https://*.js.stripe.com ${LINK}`,
+    `frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com https://*.js.stripe.com ${LINK}`, // i18n-allow: CSP directive syntax interpreted by browsers.
     // challenges.cloudflare.com: the Turnstile script's own reports, sent from the page.
-    `connect-src 'self' https://api.stripe.com https://challenges.cloudflare.com ${LINK}${uploadOrigin ? ` ${uploadOrigin}` : ""}`,
+    `connect-src 'self' https://api.stripe.com https://challenges.cloudflare.com ${LINK}${uploadOrigin ? ` ${uploadOrigin}` : ""}`, // i18n-allow: CSP directive syntax interpreted by browsers.
     // data: is the admin's enrolment QR code; blob: a photo's preview before it is uploaded.
-    `img-src 'self' data:${mediaOrigin ? ` ${mediaOrigin}` : ""} blob: https://*.link.com`,
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
+    `img-src 'self' data:${mediaOrigin ? ` ${mediaOrigin}` : ""} blob: https://*.link.com`, // i18n-allow: CSP directive syntax interpreted by browsers.
+    "object-src 'none'", // i18n-allow: CSP directive syntax interpreted by browsers.
+    "base-uri 'none'", // i18n-allow: CSP directive syntax interpreted by browsers.
+    "form-action 'self'", // i18n-allow: CSP directive syntax interpreted by browsers.
+    "frame-ancestors 'none'", // i18n-allow: CSP directive syntax interpreted by browsers.
     ...reportingDirectives(reportUrl),
   ].join("; ");
 }

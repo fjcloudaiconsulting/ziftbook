@@ -5,12 +5,12 @@ import { apiUrl } from "./upstream.ts";
 // GET /api/setup. Throws when the API can't be reached or answers anything but 200.
 export async function readNeedsSetup(): Promise<boolean> {
   const upstream = apiUrl();
-  if (!upstream) throw new Error("api url unset");
+  if (!upstream) throw new Error("api url unset"); // i18n-allow: Setup diagnostic consumed by the gate fallback, never rendered.
   const response = await fetch(new URL("/api/setup", upstream), { cache: "no-store", signal: AbortSignal.timeout(2_000) });
-  if (!response.ok) throw new Error(`setup state ${response.status}`);
+  if (!response.ok) throw new Error(`setup state ${response.status}`); // i18n-allow: Setup diagnostic consumed by the gate fallback, never rendered.
   const body = await response.json();
   // A 200 that isn't {needs_setup: boolean} is a broken upstream, never an answer ("false" gets cached).
-  if (typeof body?.needs_setup !== "boolean") throw new Error("setup state malformed");
+  if (typeof body?.needs_setup !== "boolean") throw new Error("setup state malformed"); // i18n-allow: Setup diagnostic consumed by the gate fallback, never rendered.
   return body.needs_setup;
 }
 

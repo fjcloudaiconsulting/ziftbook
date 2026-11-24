@@ -45,7 +45,7 @@ export function shellQuote(value: string): string {
 
 /** The CLI command that issues a setup ticket, up to (not including) the reason. */
 export function enrolCommand(email: string): string {
-  return `python -m app.admin enrol ${shellQuote(email)}`;
+  return `python -m app.admin enrol ${shellQuote(email)}`; // i18n-allow: Executable command syntax; translating it would break the command.
 }
 
 /** An admin data answer that means the session is gone (401) or short of its second factor (403): back through
