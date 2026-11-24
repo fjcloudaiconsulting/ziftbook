@@ -1186,6 +1186,16 @@ English (`en`) is the source for every catalog (`frontend/messages`, `landing/st
 first, then to `nl` and `pt` with the same `{placeholders}`; `node scripts/check-catalogs.mjs` (part of
 `make lint`) enforces it.
 
+Frontend lint also runs `frontend/scripts/check-code-strings.mjs` over `frontend/lib` and `frontend/app`.
+It catches prose in string literals, template pieces and concatenations, including common UI text fields.
+It uses TypeScript syntax and token shape, not data-flow analysis: an unlabelled lowercase identifier-shaped
+word may still be a machine key. JSX text remains covered by `react/jsx-no-literals`.
+
+Put prose in the message catalogs. A justified machine string can use `// i18n-allow: <reason>` on its line
+or the immediately preceding line. Inside a JSX expression, use `/* i18n-allow: <reason> */` beside the literal.
+The reason is required, and the comment does not exempt later lines. Localized legal files are also catalogs;
+the check identifies them from message-catalog filenames, so adding a language needs no checker change.
+
 ### Which language a person sees (ZIF-102)
 
 A person's language is their own: `users.locale`, set with `PUT /api/session/locale`, the same in every business
