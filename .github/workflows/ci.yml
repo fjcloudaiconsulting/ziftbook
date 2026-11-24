@@ -121,7 +121,7 @@ jobs:
 
   # ZIF-295: the suite runs in 4 shards, each on its own runner and Postgres, balanced by the recorded test times in
   # backend/.test_durations (pytest-split). A test missing from that file counts as the average, so a stale file only
-  # unbalances the shards, never skips a test. Refresh it now and then: `uv run pytest -n 4 --store-durations`.
+  # unbalances the shards, never skips a test. Refresh with `uv run pytest -n 4 --store-durations --clean-durations`.
   api:
     name: Backend Tests (${{ matrix.group }}/4)
     needs: changes
@@ -186,7 +186,7 @@ jobs:
         if: matrix.group == 1
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
-        run: uv run pytest -n auto --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration
+        run: uv run pytest -n auto --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:

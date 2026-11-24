@@ -1114,17 +1114,33 @@ def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
     with migrate_engine.begin() as conn:
         a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
         b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
-    people = People(
-        a=a,
-        b=b,
-        only_a=add_user(migrate_engine),
-        only_b=add_user(migrate_engine),
-        both=add_user(migrate_engine, locale="nl"),
-    )
-    add_membership(a, people.only_a)
-    add_membership(b, people.only_b)
-    add_membership(a, people.both, "owner")
-    add_membership(b, people.both)
+        people = People(a=a, b=b, only_a=uuid.uuid7(), only_b=uuid.uuid7(), both=uuid.uuid7())
+        # Seed together: thousands of tests need these rows, not eight separate connections.
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, locale, name) "
+                "VALUES (:id, :email, :locale, 'Test Person')"
+            ),
+            [
+                {"id": user, "email": email_of(user), "locale": locale}
+                for user, locale in (
+                    (people.only_a, None),
+                    (people.only_b, None),
+                    (people.both, "nl"),
+                )
+            ],
+        )
+        for tenant, user, role in (
+            (a, people.only_a, "worker"),
+            (b, people.only_b, "worker"),
+            (a, people.both, "owner"),
+            (b, people.both, "worker"),
+        ):
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant)})
+            conn.execute(
+                text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
+                {"t": tenant, "u": user, "r": role},
+            )
     yield people
     # First, and as the migrate role: bookings reference memberships (no ON DELETE), clients and
     # services, so they must go before any of the three. The app role has no DELETE on them.

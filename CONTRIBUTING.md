@@ -18,6 +18,19 @@
   just the title check and the two aggregate checks, `Backend Checks` and `Frontend Checks`, which pass when every job
   they gate passed or was skipped. A push to `main` runs every job.
 
+## Backend tests
+
+Run the full suite with `cd backend && uv run pytest -n 4`. Each worker creates its own database;
+use a separate base database name for each checkout. The serial safety check also runs in CI with
+`uv run pytest -q tests/test_parallel_safety.py`.
+
+After adding tests or changing fixture costs, refresh the shard weights with
+`uv run pytest -n 4 --store-durations --clean-durations` from `backend/` and commit `.test_durations`
+only after a green full run. The timings include setup, calls and teardown; worker startup and
+collection are outside them. `--clean-durations` removes entries for deleted tests. Keep the worker
+count and machine consistent when comparing timings, then check all four CI shards because local
+timings do not predict their wall time exactly.
+
 ## Releases
 
 One version for the whole app: backend, frontend and migrations images are always released together with the same
