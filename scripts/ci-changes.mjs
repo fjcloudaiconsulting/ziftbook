@@ -5,14 +5,23 @@ import { readFileSync } from "node:fs";
 // Read by no build, test or check. Not CONTRIBUTING.md: check-env-doc reads its env table.
 const DOCS = /^(?!CONTRIBUTING\.md$)[^/]+\.md$|^docs\/|^graphify-out\/|^LICENSE$/;
 
+// Source files read directly by tests in the other app.
+const CROSS_READS = new Set([
+  "backend/openapi.json",
+  "backend/app/main.py",
+  "backend/app/entitlements.py",
+  "backend/app/countries.py",
+  "frontend/lib/placeholders.ts",
+]);
+
 export function affected(paths) {
   const jobs = { backend: false, frontend: false, landing: false, repo: false };
   for (const path of paths) {
     if (DOCS.test(path)) continue;
     // The repo checks scan the whole tree (env names and docs, catalogs, Docker Hub references).
     jobs.repo = true;
-    // Frontend tests read both: the generated client and the API's MAX_BODY (tests/proxy.test.mjs).
-    if (path === "backend/openapi.json" || path === "backend/app/main.py") jobs.backend = jobs.frontend = true;
+    // The backend also scans this route directory to check reserved business slugs.
+    if (CROSS_READS.has(path) || /^frontend\/app\/\[locale\](?:\/|$)/.test(path)) jobs.backend = jobs.frontend = true;
     else if (path.startsWith("backend/")) jobs.backend = true;
     else if (path.startsWith("frontend/")) jobs.frontend = true;
     else if (path.startsWith("landing/")) jobs.landing = true;

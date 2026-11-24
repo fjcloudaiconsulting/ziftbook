@@ -216,14 +216,41 @@ def test_0040_backfill_and_round_trip(
     test_photo_whole_check(people, "photo_width")
 
 
+def placeholder_words(source: str) -> dict[str, list[str]]:
+    # Keep quoted strings intact: comment markers inside a search word are still part of it.
+    source = re.sub(
+        r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/',
+        lambda match: " " if match[0].startswith("/") else match[0],
+        source,
+        flags=re.DOTALL,
+    )
+    return {
+        kind: re.findall(r'"([^"]+)"', words)
+        for kind, words in re.findall(r'\[\s*"(\w+)",\s*\[([^\]]*)\],?\s*\]', source)
+    }
+
+
+def test_placeholder_words_ignore_comments_but_preserve_strings() -> None:
+    source = """
+    const WORDS = [ /* ["not-a-kind", ["not-a-word"]] */
+      [ // tuple comment
+        "beauty", /* kind comment */ [
+          "face", // word comment
+          "https://example.invalid", "/* search word */"
+        ], // inner array comment
+      ],
+    ];
+    """
+    assert placeholder_words(source) == {
+        "beauty": ["face", "https://example.invalid", "/* search word */"]
+    }
+
+
 # Guard: the migration's frozen word lists are the web app's (frontend/lib/placeholders.ts), so the
 # backfill and the form's pre-selection agree on every word, not only the ones in NAMES.
 def test_the_backfill_words_are_the_web_apps() -> None:
     source = (API_DIR.parent / "frontend" / "lib" / "placeholders.ts").read_text()
-    web = {
-        kind: re.findall(r'"([^"]+)"', words)
-        for kind, words in re.findall(r'\[\s*"(\w+)",\s*\[([^\]]*)\],?\s*\]', source)
-    }
+    web = placeholder_words(source)
     frozen = {
         kind: words.split("|") for kind, words in migration("0040_service_photos.py").KINDS.items()
     }
