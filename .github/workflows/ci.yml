@@ -175,11 +175,28 @@ jobs:
       # ZIF-284: a vacuum of a table whose grants a migration just changed deadlocks the migration's
       # next ALTER on it, and failed round-trip tests twice on release commits. This Postgres is
       # thrown away after the job, so turning autovacuum off costs nothing here.
-      - name: Turn autovacuum off
-        run: >-
-          docker exec ${{ job.services.postgres.id }}
-          psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook
-          -c "ALTER SYSTEM SET autovacuum = off" -c "SELECT pg_reload_conf()"
+      # Only this disposable test service may discard writes on crash, so skip durability work.
+      - name: Configure disposable test database
+        run: |
+          docker exec ${{ job.services.postgres.id }} \
+            psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook \
+            -c "ALTER SYSTEM SET autovacuum = off" \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          docker exec -i ${{ job.services.postgres.id }} \
+            psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook <<'SQL'
+          DO $$
+          BEGIN
+            IF current_setting('autovacuum') <> 'off'
+              OR current_setting('fsync') <> 'off'
+              OR current_setting('synchronous_commit') <> 'off'
+              OR current_setting('full_page_writes') <> 'off' THEN
+              RAISE EXCEPTION 'disposable test database settings did not reload';
+            END IF;
+          END $$;
+          SQL
       # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
       # without xdist. Once, in the first shard.
       - name: Run backend tests (serial path)
