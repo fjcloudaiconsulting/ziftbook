@@ -3600,3 +3600,95 @@ def test_0112_round_trips_the_payment_snapshot_contract(
             assert tuple(session.execute(SNAPSHOT_OF, {"id": restored}).one()) == ("choice", 2500)
     finally:
         command.upgrade(cfg, "head")
+
+
+CALENDAR_SCHEMA = text("""
+SELECT c.relname, c.relowner::regrole::text, c.relacl::text,
+       c.relrowsecurity, c.relforcerowsecurity,
+       (SELECT jsonb_agg(jsonb_build_array(a.attname, format_type(a.atttypid, a.atttypmod),
+                                         a.attnotnull) ORDER BY a.attnum)
+        FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),
+       (SELECT jsonb_agg(jsonb_build_array(k.conname, pg_get_constraintdef(k.oid), k.convalidated)
+                         ORDER BY k.conname) FROM pg_constraint k WHERE k.conrelid=c.oid)
+FROM pg_class c WHERE c.oid IN ('google_calendar_connections'::regclass,
+                               'google_calendar_oauth_attempts'::regclass)
+ORDER BY c.relname
+""")
+CALENDAR_BINDING = text("""
+SELECT pg_get_functiondef(oid), proowner::regrole::text, proacl::text, proconfig, prosecdef
+FROM pg_proc WHERE oid = to_regprocedure('calendar_row_binding()')
+""")
+
+
+def test_calendar_storage_round_trip_preserves_definitions_grants_and_legacy_rows(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    module = migration("0109_google_calendar_storage.py")
+    member = member_id(people.a, people.only_a)
+    with migrate_engine.connect() as conn:
+        schema = conn.execute(CALENDAR_SCHEMA).all()
+        function = conn.execute(CALENDAR_BINDING).one()
+        prior_function = conn.execute(ACCOUNT_BY_EMAIL_STATE).one()
+    assert tuple(function)[1:] == (
+        "ziftbook_migrate",
+        "{ziftbook_migrate=X/ziftbook_migrate}",
+        ["search_path=pg_catalog, public, pg_temp"],
+        False,
+    )
+    try:
+        command.downgrade(cfg, module.down_revision)
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text("SELECT to_regclass('google_calendar_connections')")) is None
+            assert conn.scalar(text("SELECT to_regclass('google_calendar_oauth_attempts')")) is None
+            assert conn.execute(CALENDAR_BINDING).first() is None
+            assert conn.execute(ACCOUNT_BY_EMAIL_STATE).one() == prior_function
+        with tenant_context(people.a) as conn:
+            conn.execute(
+                text("""
+              INSERT INTO time_off (tenant_id, member_id, source, external_id, starts_at, ends_at)
+              VALUES (:t, :m, 'google', 'legacy-unmapped', now(), now() + interval '1 hour')
+            """),
+                {"t": people.a, "m": member},
+            )
+    finally:
+        command.upgrade(cfg, "head")
+    try:
+        with migrate_engine.connect() as conn:
+            assert conn.execute(CALENDAR_SCHEMA).all() == schema
+            assert conn.execute(CALENDAR_BINDING).one() == function
+            assert conn.execute(ACCOUNT_BY_EMAIL_STATE).one() == prior_function
+            checks = conn.execute(
+                text("""
+              SELECT conname, convalidated FROM pg_constraint WHERE conrelid='time_off'::regclass
+                AND conname IN ('ck_time_off_calendar_connection', 'ck_time_off_google_shape',
+                                'fk_time_off_calendar_connection') ORDER BY conname
+            """)
+            ).all()
+            assert len(checks) == 3 and all(not row.convalidated for row in checks)
+        with tenant_context(people.a) as conn:
+            assert conn.scalar(text("SELECT external_id FROM time_off")) == "legacy-unmapped"
+    finally:
+        with tenant_context(people.a) as conn:
+            conn.execute(text("DELETE FROM time_off WHERE external_id='legacy-unmapped'"))
+
+
+def test_calendar_downgrade_refuses_to_destroy_credentials(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_calendar_db import insert_connection
+
+    cfg = lock_timeout_config(monkeypatch)
+    module = migration("0109_google_calendar_storage.py")
+    member = member_id(people.a, people.only_a)
+    with tenant_context(people.a) as conn:
+        connection = insert_connection(conn, people.a, member, people.only_a)
+    try:
+        with pytest.raises(DBAPIError, match="calendar storage must be empty"):
+            command.downgrade(cfg, module.down_revision)
+        with tenant_context(people.a) as conn:
+            assert conn.scalar(text("SELECT id FROM google_calendar_connections")) == connection
+    finally:
+        with tenant_context(people.a) as conn:
+            conn.execute(text("DELETE FROM google_calendar_connections"))
+        command.upgrade(cfg, "head")

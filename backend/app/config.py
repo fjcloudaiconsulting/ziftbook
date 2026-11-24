@@ -1,8 +1,8 @@
 import hashlib
-from typing import Literal
+from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -98,6 +98,57 @@ class SecondFactorSettings(Settings):
     # Resolved at runtime from a secret, never committed (as turnstile_secret). Losing it makes
     # every stored secret unreadable: back it up with the database credentials.
     totp_key: SecretStr = SecretStr("")
+
+
+class GoogleCalendarSettings(Settings):
+    """Read lazily: absent or invalid Calendar configuration never prevents process startup."""
+
+    model_config = SettingsConfigDict(hide_input_in_errors=True)
+
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: SecretStr = SecretStr("")
+    google_calendar_redirect_uri: str = ""
+    google_calendar_keks: SecretStr = SecretStr("")
+    google_calendar_active_key_id: str = ""
+    google_calendar_connect_enabled: bool = False
+    # Kept as text so a malformed budget cannot stop cleanup; the scheduler validates it lazily.
+    google_calendar_requests_per_minute: str = "60"
+
+    @property
+    def request_budget(self) -> int:
+        """Conservative cleanup budget even when configuration is malformed."""
+        value = self.google_calendar_requests_per_minute
+        if value.isascii() and value.isdecimal() and len(value) <= 6:
+            parsed = int(value)
+            if 1 <= parsed <= 100_000 and value == str(parsed):
+                return parsed
+        return 60
+
+    @property
+    def request_budget_valid(self) -> bool:
+        value = self.google_calendar_requests_per_minute
+        return value == str(self.request_budget)
+
+    @model_validator(mode="after")
+    def fixed_redirect(self) -> Self:
+        if self.google_calendar_redirect_uri:
+            origin = MailSettings().app_url.rstrip("/")
+            parts = urlsplit(origin)
+            if (
+                self.google_calendar_redirect_uri != origin + "/api/google-calendar/callback"
+                or parts.path
+                or parts.query
+                or parts.fragment
+                or parts.username
+                or parts.password
+                or not parts.hostname
+                or (
+                    parts.scheme != "https"
+                    and not (parts.scheme == "http" and parts.hostname in LOCAL_HOSTS)
+                )
+            ):
+                raise ValueError("calendar_redirect_invalid")
+        return self
 
 
 class RateLimitSettings(Settings):
