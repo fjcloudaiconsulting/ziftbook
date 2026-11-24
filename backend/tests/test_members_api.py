@@ -1231,6 +1231,8 @@ def test_a_member_with_a_live_appointment_cannot_be_removed(
         starts_at=now + starts,
         ends_at=now + ends,
         status=status,
+        payment_rule="choice" if status == "awaiting_payment" else None,
+        payment_due_minor=2500 if status == "awaiting_payment" else None,
         expires_at=None if expires is None else now + expires,
     )
 

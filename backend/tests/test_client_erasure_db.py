@@ -173,11 +173,13 @@ INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, en
                       duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
                       reschedule_cutoff_hours, worker_display_name, cancellation_policy_text,
                       client_name, client_phone, client_message, decline_message, checkout_hash,
-                      booked_as)
+                      booked_as, payment_rule, payment_due_minor)
 VALUES (current_setting('app.tenant_id')::uuid, :client, :worker, :service, :starts,
         :starts + interval '30 minutes', :status, :expires, 'booking_page',
         '{"en": "Cut"}'::jsonb, 2500, 'EUR', 30, false, 48, 24, 'Worker Name', 'Policy text',
-        'Typed Name', '+31611111111', 'Typed message', :decline, :checkout, :booked_as)
+        'Typed Name', '+31611111111', 'Typed message', :decline, :checkout, :booked_as,
+        CASE WHEN :status = 'awaiting_payment' THEN 'choice' END,
+        CASE WHEN :status = 'awaiting_payment' THEN 2500 END)
 RETURNING id
 """)
 INSERT_EVENT = text("""

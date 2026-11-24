@@ -378,6 +378,8 @@ def test_the_queue_lists_only_live_pendings_soonest_first(
             starts_at=starts_at,
             ends_at=starts_at + timedelta(minutes=30),
             status="awaiting_payment",
+            payment_rule="choice",
+            payment_due_minor=2500,
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
             source="booking_page",
         )

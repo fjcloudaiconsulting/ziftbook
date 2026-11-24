@@ -3136,53 +3136,53 @@ def test_0102_round_trips_the_payment_rules(
             )
         paid, unpaid = _seed_booking(people, days=3), _seed_booking(people, days=5)
         _insert_payment(migrate_engine, people, paid, GOOD_PAYMENT)
-    finally:
-        command.upgrade(cfg, "head")
-    with migrate_engine.connect() as conn:
-        assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == head
-        assert tuple(conn.execute(SNAPSHOT_PRIVILEGES).one()) == (True, True, False, False)
-    with migrate_tenant_context(migrate_engine, people.a) as conn:
-        assert tuple(conn.execute(SNAPSHOT_OF, {"id": paid}).one()) == ("choice", 2500)
-        assert tuple(conn.execute(SNAPSHOT_OF, {"id": unpaid}).one()) == (None, None)
+        command.upgrade(cfg, "0102")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == head
+            assert tuple(conn.execute(SNAPSHOT_PRIVILEGES).one()) == (True, True, False, False)
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            assert tuple(conn.execute(SNAPSHOT_OF, {"id": paid}).one()) == ("choice", 2500)
+            assert tuple(conn.execute(SNAPSHOT_OF, {"id": unpaid}).one()) == (None, None)
 
-    # The running release's checkout: a booking placed awaiting a payment with no snapshot.
-    start = datetime.now(UTC) + timedelta(days=4)
-    window = _seed_booking(people, days=6)
-    with tenant_context(people.a) as session:
-        held = insert_booking(
-            session,
-            client_id=session.scalar(
-                text("SELECT client_id FROM bookings WHERE id = :id"), {"id": window}
-            ),
-            worker_id=member_id(people.a, people.both),
-            service_id=session.scalar(
-                text("SELECT service_id FROM bookings WHERE id = :id"), {"id": window}
-            ),
-            starts_at=start,
-            ends_at=start + timedelta(minutes=30),
-            status="awaiting_payment",
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
-            source="booking_page",
+        # The running release's checkout: a booking placed awaiting a payment with no snapshot.
+        start = datetime.now(UTC) + timedelta(days=4)
+        window = _seed_booking(people, days=6)
+        with tenant_context(people.a) as session:
+            held = insert_booking(
+                session,
+                client_id=session.scalar(
+                    text("SELECT client_id FROM bookings WHERE id = :id"), {"id": window}
+                ),
+                worker_id=member_id(people.a, people.both),
+                service_id=session.scalar(
+                    text("SELECT service_id FROM bookings WHERE id = :id"), {"id": window}
+                ),
+                starts_at=start,
+                ends_at=start + timedelta(minutes=30),
+                status="awaiting_payment",
+                expires_at=datetime.now(UTC) + timedelta(minutes=30),
+                source="booking_page",
+            )
+            assert tuple(session.execute(SNAPSHOT_OF, {"id": held}).one()) == ("choice", 2500)
+        _insert_payment(migrate_engine, people, held, {**GOOD_PAYMENT, "intent_id": "pi_window"})
+
+        # A deposit: the payment is the snapshot's amount, never the price.
+        deposit = _seed_booking(people, days=7)
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(SET_SNAPSHOT, {"rule": "deposit", "due": 750, "id": deposit})
+        with pytest.raises(IntegrityError) as raised:
+            _insert_payment(
+                migrate_engine, people, deposit, {**GOOD_PAYMENT, "intent_id": "pi_full"}
+            )
+        assert raised.value.orig.diag.constraint_name == "fk_booking_payments_booking_due"  # type: ignore[union-attr]
+        _insert_payment(
+            migrate_engine,
+            people,
+            deposit,
+            {**GOOD_PAYMENT, "kind": "pay", "intent_id": "pi_deposit", "amount_minor": 750},
         )
-        assert tuple(session.execute(SNAPSHOT_OF, {"id": held}).one()) == ("choice", 2500)
-    _insert_payment(migrate_engine, people, held, {**GOOD_PAYMENT, "intent_id": "pi_window"})
-
-    # A deposit: the payment is the snapshot's amount, never the price.
-    deposit = _seed_booking(people, days=7)
-    with migrate_tenant_context(migrate_engine, people.a) as conn:
-        conn.execute(SET_SNAPSHOT, {"rule": "deposit", "due": 750, "id": deposit})
-    with pytest.raises(IntegrityError) as raised:
-        _insert_payment(migrate_engine, people, deposit, {**GOOD_PAYMENT, "intent_id": "pi_full"})
-    assert raised.value.orig.diag.constraint_name == "fk_booking_payments_booking_due"  # type: ignore[union-attr]
-    _insert_payment(
-        migrate_engine,
-        people,
-        deposit,
-        {**GOOD_PAYMENT, "kind": "pay", "intent_id": "pi_deposit", "amount_minor": 750},
-    )
-    # The downgrade refuses rather than drop the deposit's record to fit the price key. The
-    # revisions above 0102 have gone down by then (each commits alone): back to head after.
-    try:
+        # The downgrade refuses rather than drop the deposit's record to fit the price key.
+        # The failed downgrade must leave 0102 intact: back to head after.
         with pytest.raises(IntegrityError):
             command.downgrade(cfg, "0101")
         with migrate_engine.connect() as conn:
@@ -3509,3 +3509,94 @@ def test_0107_round_trips_the_fee_checks(
         assert [tuple(r) for r in conn.execute(FEE_CHECKS)] == [
             ("ck_booking_payments_fee_only_on_pay", False)
         ]
+
+
+# ZIF-292: use the original 0102 definition as the downgrade oracle, not 0112's own copy.
+def test_0112_round_trips_the_payment_snapshot_contract(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    m = migration("0112_booking_payment_snapshot_contract.py")
+    function = text("""
+    SELECT pg_get_functiondef(oid), proowner::regrole::text, proacl::text, proconfig, prosecdef
+    FROM pg_proc WHERE oid = to_regprocedure('bookings_payment_snapshot_default()')
+    """)
+    trigger = text("""
+    SELECT pg_get_triggerdef(oid) FROM pg_trigger
+    WHERE tgrelid = 'bookings'::regclass AND tgname = 'bookings_payment_snapshot_default'
+    """)
+    table = text("""
+    SELECT relowner::regrole::text, relacl::text, relforcerowsecurity,
+           (SELECT array_agg(attacl::text ORDER BY attnum) FROM pg_attribute
+            WHERE attrelid = 'bookings'::regclass AND attnum > 0 AND NOT attisdropped)
+    FROM pg_class WHERE oid = 'bookings'::regclass
+    """)
+    check = text("""
+    SELECT convalidated FROM pg_constraint
+    WHERE conrelid = 'bookings'::regclass AND conname = 'ck_bookings_awaiting_payment_snapshot'
+    """)
+    try:
+        command.downgrade(cfg, "0101")
+        command.upgrade(cfg, "0102")
+        with migrate_engine.connect() as conn:
+            original_function = tuple(conn.execute(function).one())
+            original_trigger = conn.scalar(trigger)
+        command.upgrade(cfg, m.down_revision)
+        with migrate_engine.connect() as conn:
+            original_table = tuple(conn.execute(table).one())
+        window = _seed_booking(people, days=10)
+        with tenant_context(people.a) as session:
+            ids = session.execute(
+                text("SELECT client_id, worker_id, service_id FROM bookings WHERE id = :id"),
+                {"id": window},
+            ).one()
+        start = datetime.now(UTC) + timedelta(days=11)
+        row = dict(
+            client_id=ids.client_id,
+            worker_id=ids.worker_id,
+            service_id=ids.service_id,
+            starts_at=start,
+            ends_at=start + timedelta(minutes=30),
+            status="awaiting_payment",
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        with tenant_context(people.a) as session:
+            legacy = insert_booking(session, **row)
+            assert tuple(session.execute(SNAPSHOT_OF, {"id": legacy}).one()) == ("choice", 2500)
+        # A pre-0102 awaiting row without a payment was not backfilled by 0102.
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(SET_SNAPSHOT, {"rule": None, "due": None, "id": legacy})
+        command.upgrade(cfg, "head")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(function).first() is None
+            assert conn.scalar(trigger) is None
+            assert conn.scalar(check) is False
+            assert tuple(conn.execute(table).one()) == original_table
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            assert tuple(conn.execute(SNAPSHOT_OF, {"id": legacy}).one()) == (None, None)
+            # A historical hold can still expire without inventing payment terms.
+            conn.execute(
+                text("UPDATE bookings SET status = 'expired' WHERE id = :id"), {"id": legacy}
+            )
+        with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:
+            insert_booking(session, **row)
+        assert isinstance(error.value.orig, CheckViolation)
+        assert error.value.orig.diag.constraint_name == "ck_bookings_awaiting_payment_snapshot"
+        for rule, due in (("choice", 2500), ("deposit", 750), ("prepaid", 2500)):
+            with tenant_context(people.a) as session:
+                placed = insert_booking(session, **row, payment_rule=rule, payment_due_minor=due)
+                assert tuple(session.execute(SNAPSHOT_OF, {"id": placed}).one()) == (rule, due)
+                session.execute(
+                    text("UPDATE bookings SET status = 'expired' WHERE id = :id"), {"id": placed}
+                )
+        command.downgrade(cfg, m.down_revision)
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(function).one()) == original_function
+            assert conn.scalar(trigger) == original_trigger
+            assert tuple(conn.execute(table).one()) == original_table
+            assert conn.scalar(check) is None
+        with tenant_context(people.a) as session:
+            restored = insert_booking(session, **row)
+            assert tuple(session.execute(SNAPSHOT_OF, {"id": restored}).one()) == ("choice", 2500)
+    finally:
+        command.upgrade(cfg, "head")
