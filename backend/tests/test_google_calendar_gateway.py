@@ -131,6 +131,15 @@ def signed(key: rsa.RSAPrivateKey, data: dict[str, Any], kid: str = "key-1") -> 
     return jwt.encode(data, key, algorithm="RS256", headers={"kid": kid})
 
 
+def signed_hs256() -> str:
+    return jwt.encode(
+        claims(),
+        "independent-test-hmac-key-at-least-32-bytes",
+        algorithm="HS256",
+        headers={"kid": "key-1"},
+    )
+
+
 def jwks(
     http: Http, key: rsa.RSAPrivateKey, kid: str = "key-1", *, use: str = "sig", alg: str = "RS256"
 ) -> None:
@@ -291,12 +300,7 @@ def test_rejects_non_rs256_header_before_loading_signing_keys(
     algorithm: str,
 ) -> None:
     if algorithm == "HS256":
-        fixture = jwt.encode(
-            claims(),
-            "independent-test-hmac-key-at-least-32-bytes",
-            algorithm=algorithm,
-            headers={"kid": "key-1"},
-        )
+        fixture = signed_hs256()
     else:
         header = base64.urlsafe_b64encode(json.dumps({"alg": algorithm, "kid": "key-1"}).encode())
         fixture = header.decode().rstrip("=") + ".e30.c3R1Yg"
@@ -305,6 +309,15 @@ def test_rejects_non_rs256_header_before_loading_signing_keys(
         exchange(gateway)
     assert failure.value.category == google.Outcome.INVALID_IDENTITY
     assert [request.url for request in http.requests] == [google.TOKEN_URL]
+
+
+def test_pyjwt_rejects_hs256_with_rs256_pinned(
+    signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey],
+) -> None:
+    trusted, _ = signing_keys
+    key = jwt.PyJWK(RSAAlgorithm.to_jwk(trusted.public_key(), as_dict=True), algorithm="RS256")
+    with pytest.raises(jwt.InvalidAlgorithmError):
+        jwt.decode(signed_hs256(), key=key, algorithms=["RS256"], leeway=60)
 
 
 @pytest.mark.parametrize(
@@ -523,6 +536,11 @@ def test_calendar_http_failure_classification(
         (400, "invalid_request", google.Outcome.INVALID_REQUEST),
         (400, "invalid_scope", google.Outcome.INVALID_REQUEST),
         (403, None, google.Outcome.INVALID_CLIENT),
+        (403, "rateLimitExceeded", google.Outcome.TRANSIENT),
+        (403, "userRateLimitExceeded", google.Outcome.TRANSIENT),
+        (403, {"errors": [{"reason": "rateLimitExceeded"}]}, google.Outcome.TRANSIENT),
+        (403, {"errors": [{"reason": "userRateLimitExceeded"}]}, google.Outcome.TRANSIENT),
+        (403, {"errors": [{"reason": "quotaExceeded"}]}, google.Outcome.INVALID_CLIENT),
         (400, "unknown", google.Outcome.TRANSIENT),
     ],
 )
@@ -530,12 +548,13 @@ def test_oauth_errors_use_structured_reason(
     gateway: google.Gateway,
     http: Http,
     status: int,
-    reason: str | None,
+    reason: str | dict[str, object] | None,
     category: google.Outcome,
     operation: google.Operation,
 ) -> None:
     body = None if reason is None else {"error": reason, "error_description": PROVIDER_DETAIL}
-    http.add(google.TOKEN_URL, body, status=status)
+    headers = {"Retry-After": "32"} if status == 403 else {}
+    http.add(google.TOKEN_URL, body, status=status, headers=headers)
     with pytest.raises(google.Failed) as failure:
         if operation == google.Operation.EXCHANGE:
             exchange(gateway)
@@ -543,6 +562,7 @@ def test_oauth_errors_use_structured_reason(
             gateway.refresh(refresh_token=REFRESH)
     assert failure.value.category == category
     assert failure.value.status_class == google.StatusClass.CLIENT_ERROR
+    assert failure.value.retry_after == (32 if status == 403 else None)
 
 
 def test_revoke_distinguishes_accepted_invalid_and_unknown(

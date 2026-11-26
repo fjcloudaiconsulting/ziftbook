@@ -35,6 +35,7 @@ DEADLINE = 6.0
 MAX_BYTES = 2 * 1024 * 1024
 MAX_INTERVALS = 50_000
 MAX_RETRY_AFTER = 30 * 60
+RATE_LIMIT_REASONS = ("rateLimitExceeded", "userRateLimitExceeded")
 PKCE_VERIFIER = re.compile(r"[A-Za-z0-9._~-]{43,128}")
 RFC3339 = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
@@ -214,7 +215,7 @@ def _google_reasons(errors: object) -> set[str]:
 
 
 def _calendar_category(reasons: set[str], *, per_calendar: bool = False) -> Outcome:
-    if reasons & {"rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded"}:
+    if "quotaExceeded" in reasons or not reasons.isdisjoint(RATE_LIMIT_REASONS):
         return Outcome.QUOTA
     if reasons & {"timeRangeEmpty", "invalid", "invalidArgument", "badRequest", "required"}:
         return Outcome.INVALID_REQUEST
@@ -242,7 +243,14 @@ def _failure(op: Operation | None, reply: _Reply) -> Failed:
             if status != 403 and category == Outcome.RECONNECT_REQUIRED:
                 category = Outcome.TRANSIENT
     elif op in (Operation.EXCHANGE, Operation.REFRESH) and status in (400, 401, 403):
-        if status == 403 or oauth_error in ("invalid_client", "unauthorized_client"):
+        if status == 403:
+            if isinstance(oauth_error, dict):
+                reasons = _google_reasons(oauth_error.get("errors"))
+                rate_limited = not reasons.isdisjoint(RATE_LIMIT_REASONS)
+            else:
+                rate_limited = oauth_error in RATE_LIMIT_REASONS
+            category = Outcome.TRANSIENT if rate_limited else Outcome.INVALID_CLIENT
+        elif oauth_error in ("invalid_client", "unauthorized_client"):
             category = Outcome.INVALID_CLIENT
         elif oauth_error == "invalid_grant":
             category = Outcome.RECONNECT_REQUIRED
