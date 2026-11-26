@@ -93,15 +93,21 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   }
 
   const action = account && owner ? paymentsAction(account.state, account.country_supported, account.currency_supported) : null;
-  const body = !account
-    ? null
-    : account.state === "off"
-      ? t("paymentsOff")
-      : !account.country_supported
-        ? t("paymentsCountry")
-        : account.state === "none" && !account.currency_supported
-          ? t("paymentsCurrency", { currency: currencyName(account.currency, locale) })
-          : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
+  let body: string | null = null;
+  if (account) {
+    if (account.state === "off") body = t("paymentsOff");
+    else if (!account.country_supported) body = t("paymentsCountry");
+    else if (account.state === "none" && !account.currency_supported) body = t("paymentsCurrency", { currency: currencyName(account.currency, locale) });
+    else if (!planLoading) {
+      const statusKey = {
+        none: available ? "paymentsNone" : "paymentsAccountNone",
+        onboarding: available ? "paymentsOnboarding" : "paymentsAccountOnboarding",
+        ready: available ? "paymentsReady" : "paymentsAccountReady",
+      } as const;
+      const status = t(statusKey[account.state]);
+      body = available || entitlements === null ? status : t("paymentsPlanDisabled", { status });
+    }
+  }
 
   return (
     <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={disabled}>
@@ -126,11 +132,14 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
             {t("paymentsFees", { direct: percentOf(account.platform_fee_direct, locale), marketplace: percentOf(account.platform_fee_marketplace, locale) })}
           </p>
           <p className={styles.body}>
-            {t("paymentsStripeFee")}{" "}
-            <a href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
-              {t("paymentsStripePricing")}
-              <span className={uiStyles.srOnly}> {t("opensInNewTab")}</span>
-            </a>
+            {/* shortcut: the duplicate .body rule makes this paragraph flex, remove the wrapper in ZIF-305. */}
+            <span>
+              {t("paymentsStripeFee")}{" "}
+              <a className={uiStyles.inlineLink} href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
+                {t("paymentsStripePricing")}
+                <span className={uiStyles.srOnly}> {t("opensInNewTab")}</span>
+              </a>
+            </span>
           </p>
         </>
       )}

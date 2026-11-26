@@ -198,6 +198,13 @@
 }
 /* A link has no button's built-in vertical centring inside min-height; an icon needs flex to centre on the text. */
 a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center; }
+.inlineLink {
+  color: var(--primary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.inlineLink:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .tabular { font-variant-numeric: tabular-nums; }
 .spinner {
   width: 16px;

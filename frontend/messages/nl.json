@@ -921,6 +921,10 @@
       "paymentsOnboarding": "Stripe heeft nog een paar gegevens nodig voordat je betalingen kunt ontvangen.",
       "paymentsContinue": "Verder met instellen",
       "paymentsReady": "Je bedrijf kan online betalingen ontvangen.",
+      "paymentsAccountNone": "Je hebt Stripe nog niet gekoppeld.",
+      "paymentsAccountOnboarding": "De Stripe-configuratie is nog niet afgerond.",
+      "paymentsAccountReady": "Je Stripe-account is gekoppeld.",
+      "paymentsPlanDisabled": "{status} Online betalingen blijven uit totdat ze in je abonnement zitten.",
       "paymentsDashboard": "Stripe-dashboard openen",
       "paymentsFailed": "Stripe reageerde niet. Probeer het zo nog eens.",
       "paymentsFees": "De vergoeding van ziftbook in je abonnement: {direct} van betalingen voor boekingen die rechtstreeks bij je worden gemaakt, {marketplace} van betalingen voor boekingen via de marktplaats.",
@@ -1215,8 +1219,8 @@
     },
     "planLimit": {
       "unavailable": "De plangegevens zijn niet beschikbaar. Laad de pagina opnieuw om het nog eens te proberen.",
-      "owner": "{feature} zit niet in je abonnement.",
-      "worker": "{feature} zit niet in je abonnement. Vraag het aan de eigenaar van het bedrijf.",
+      "owner": "Dit zit niet in je abonnement: {feature}.",
+      "worker": "Dit zit niet in het abonnement van het bedrijf: {feature}. Vraag het aan de eigenaar van het bedrijf.",
       "link": "Kies een abonnement"
     },
     "planBanner": {

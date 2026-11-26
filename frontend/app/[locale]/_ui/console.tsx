@@ -306,7 +306,7 @@ function PlanLimitNote({ feature, owner }: { feature: string; owner: boolean }) 
       {owner && (
         <>
           {" "}
-          <Link href="/settings?tab=plan">{t("link")}</Link>
+          <Link className={uiStyles.inlineLink} href="/settings?tab=plan">{t("link")}</Link>
         </>
       )}
     </Banner>
