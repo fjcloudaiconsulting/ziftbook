@@ -225,7 +225,7 @@ def _calendar_category(reasons: set[str], *, per_calendar: bool = False) -> Outc
     return Outcome.TRANSIENT
 
 
-def _failure(op: Operation, reply: _Reply) -> Failed:
+def _failure(op: Operation | None, reply: _Reply) -> Failed:
     status = reply.status
     body = reply.body or {}
     oauth_error = body.get("error")
@@ -241,10 +241,15 @@ def _failure(op: Operation, reply: _Reply) -> Failed:
             category = _calendar_category(_google_reasons(oauth_error.get("errors")))
             if status != 403 and category == Outcome.RECONNECT_REQUIRED:
                 category = Outcome.TRANSIENT
-    elif status in (400, 401):
-        if op in (Operation.EXCHANGE, Operation.REFRESH) and oauth_error == "invalid_grant":
+    elif op in (Operation.EXCHANGE, Operation.REFRESH) and status in (400, 401, 403):
+        if status == 403 or oauth_error in ("invalid_client", "unauthorized_client"):
+            category = Outcome.INVALID_CLIENT
+        elif oauth_error == "invalid_grant":
             category = Outcome.RECONNECT_REQUIRED
-        elif oauth_error == "invalid_client":
+        elif oauth_error in ("invalid_request", "invalid_scope"):
+            category = Outcome.INVALID_REQUEST
+    elif op == Operation.REVOKE and status in (400, 401):
+        if oauth_error == "invalid_client":
             category = Outcome.INVALID_CLIENT
         elif oauth_error == "invalid_request":
             category = Outcome.INVALID_REQUEST
@@ -256,6 +261,11 @@ def _string(data: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip() or not value.isprintable():
         raise Failed(Outcome.INVALID_RESPONSE, StatusClass.SUCCESS) from None
     return value
+
+
+def _validate_exchange(code: str, verifier: str, nonce: str) -> None:
+    if not code or not nonce or not PKCE_VERIFIER.fullmatch(verifier):
+        raise Failed(Outcome.INVALID_REQUEST) from None
 
 
 def _validate_scopes(scope_text: object) -> None:
@@ -300,7 +310,9 @@ def _utc_bounds(start: datetime, end: datetime) -> tuple[datetime, datetime]:
     if start.utcoffset() is not None and end.utcoffset() is not None:
         try:
             lower, upper = start.astimezone(UTC), end.astimezone(UTC)
-            if timedelta(0) < upper - lower <= timedelta(days=90):
+            if not (lower.microsecond or upper.microsecond) and timedelta(
+                0
+            ) < upper - lower <= timedelta(days=90):
                 return lower, upper
         except ValueError, OverflowError:
             pass
@@ -440,6 +452,7 @@ class Gateway:
         self, request: requests.PreparedRequest, timeout: Timeout
     ) -> Iterator[requests.Response]:
         # Send through the adapter directly so requests does not prepare or drain a redirect.
+        # Use direct egress and the default trust store regardless of proxy and CA-bundle env vars.
         with (
             closing(requests.adapters.HTTPAdapter(max_retries=0)) as adapter,
             # The adapter supports urllib3 Timeout at runtime, but omits it from its annotation.
@@ -506,7 +519,7 @@ class Gateway:
                 pass  # Google rotated to a key outside our cached set.
         reply = self._http(deadline, JWKS_URL)
         if reply.status != 200:
-            raise _failure(Operation.EXCHANGE, reply) from None
+            raise _failure(None, reply) from None
         try:
             keys = jwt.PyJWKSet.from_dict(reply.body or {})
             with self._key_lock:
@@ -537,6 +550,7 @@ class Gateway:
                 algorithms=["RS256"],
                 issuer=ISSUERS,
                 audience=client_id,
+                leeway=60,
                 options={
                     "require": ["iss", "aud", "exp", "nonce", "sub", "email", "email_verified"],
                     "enforce_minimum_key_length": True,
@@ -571,8 +585,7 @@ class Gateway:
 
     def exchange_code(self, *, code: str, verifier: str, nonce: str) -> Exchanged:
         def run(deadline: float) -> Exchanged:
-            if not code or not nonce or not PKCE_VERIFIER.fullmatch(verifier):
-                raise Failed(Outcome.INVALID_REQUEST) from None
+            _validate_exchange(code, verifier, nonce)
             settings = self._config()
             reply = self._http(
                 deadline,

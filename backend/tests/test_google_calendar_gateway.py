@@ -80,7 +80,7 @@ class Http:
         return response
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def http(monkeypatch: pytest.MonkeyPatch) -> Http:
     stub = Http()
     monkeypatch.setattr(socket, "create_connection", deny_network)
@@ -131,11 +131,13 @@ def signed(key: rsa.RSAPrivateKey, data: dict[str, Any], kid: str = "key-1") -> 
     return jwt.encode(data, key, algorithm="RS256", headers={"kid": kid})
 
 
-def jwks(http: Http, key: rsa.RSAPrivateKey, kid: str = "key-1") -> None:
+def jwks(
+    http: Http, key: rsa.RSAPrivateKey, kid: str = "key-1", *, use: str = "sig", alg: str = "RS256"
+) -> None:
     public_key = RSAAlgorithm.to_jwk(key.public_key(), as_dict=True)
     http.add(
         google.JWKS_URL,
-        {"keys": [{**public_key, "kid": kid, "use": "sig", "alg": "RS256"}]},
+        {"keys": [{**public_key, "kid": kid, "use": use, "alg": alg}]},
         headers={"Cache-Control": "public, max-age=600"},
     )
 
@@ -240,7 +242,11 @@ def test_exchange_uses_bound_params_and_cached_google_keys(
         ("exp", 1),
         ("nbf", 4_000_000_000),
         ("nonce", "other-nonce"),
+        ("exp", None),
+        ("iss", None),
+        ("nonce", None),
         ("sub", None),
+        ("email", None),
         ("email_verified", False),
         ("email_verified", "true"),
     ],
@@ -284,8 +290,16 @@ def test_rejects_non_rs256_header_before_loading_signing_keys(
     http: Http,
     algorithm: str,
 ) -> None:
-    header = base64.urlsafe_b64encode(json.dumps({"alg": algorithm, "kid": "key-1"}).encode())
-    fixture = header.decode().rstrip("=") + ".e30.c3R1Yg"
+    if algorithm == "HS256":
+        fixture = jwt.encode(
+            claims(),
+            "independent-test-hmac-key-at-least-32-bytes",
+            algorithm=algorithm,
+            headers={"kid": "key-1"},
+        )
+    else:
+        header = base64.urlsafe_b64encode(json.dumps({"alg": algorithm, "kid": "key-1"}).encode())
+        fixture = header.decode().rstrip("=") + ".e30.c3R1Yg"
     http.add(google.TOKEN_URL, exchange_body(fixture))
     with pytest.raises(google.Failed) as failure:
         exchange(gateway)
@@ -420,12 +434,29 @@ def test_freebusy_fails_closed(
     )
 
 
-@pytest.mark.parametrize("end", [START, START.replace(tzinfo=None), START + timedelta(days=91)])
+@pytest.mark.parametrize("use_fake", [False, True], ids=["gateway", "fake"])
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        (START, START),
+        (END, START),
+        (START.replace(tzinfo=None), END),
+        (START, END.replace(tzinfo=None)),
+        (START, START + timedelta(days=90, seconds=1)),
+        (START.replace(microsecond=1), END),
+        (START, END.replace(microsecond=1)),
+    ],
+)
 def test_freebusy_rejects_invalid_request_bounds(
-    gateway: google.Gateway, http: Http, end: datetime
+    gateway: google.Gateway,
+    http: Http,
+    start: datetime,
+    end: datetime,
+    use_fake: bool,
 ) -> None:
+    calendar = FakeGateway(transaction_open=lambda: False) if use_fake else gateway
     with pytest.raises(google.Failed) as failure:
-        gateway.freebusy(access_token=ACCESS, start=START, end=end)
+        calendar.freebusy(access_token=ACCESS, start=start, end=end)
     assert failure.value.category == google.Outcome.INVALID_REQUEST
     assert not http.requests
 
@@ -482,12 +513,16 @@ def test_calendar_http_failure_classification(
     assert failure.value.retry_after == retry
 
 
+@pytest.mark.parametrize("operation", [google.Operation.EXCHANGE, google.Operation.REFRESH])
 @pytest.mark.parametrize(
     ("status", "reason", "category"),
     [
         (400, "invalid_grant", google.Outcome.RECONNECT_REQUIRED),
         (401, "invalid_client", google.Outcome.INVALID_CLIENT),
+        (400, "unauthorized_client", google.Outcome.INVALID_CLIENT),
         (400, "invalid_request", google.Outcome.INVALID_REQUEST),
+        (400, "invalid_scope", google.Outcome.INVALID_REQUEST),
+        (403, None, google.Outcome.INVALID_CLIENT),
         (400, "unknown", google.Outcome.TRANSIENT),
     ],
 )
@@ -495,15 +530,19 @@ def test_oauth_errors_use_structured_reason(
     gateway: google.Gateway,
     http: Http,
     status: int,
-    reason: str,
+    reason: str | None,
     category: google.Outcome,
+    operation: google.Operation,
 ) -> None:
-    http.add(
-        google.TOKEN_URL, {"error": reason, "error_description": PROVIDER_DETAIL}, status=status
-    )
+    body = None if reason is None else {"error": reason, "error_description": PROVIDER_DETAIL}
+    http.add(google.TOKEN_URL, body, status=status)
     with pytest.raises(google.Failed) as failure:
-        gateway.refresh(refresh_token=REFRESH)
+        if operation == google.Operation.EXCHANGE:
+            exchange(gateway)
+        else:
+            gateway.refresh(refresh_token=REFRESH)
     assert failure.value.category == category
+    assert failure.value.status_class == google.StatusClass.CLIENT_ERROR
 
 
 def test_revoke_distinguishes_accepted_invalid_and_unknown(
@@ -603,12 +642,30 @@ def test_fake_gateway_guards_transactions_and_simulates_grant_lifecycle() -> Non
     interval = google.Interval(START, END)
     fake.accounts[SUBJECT] = Account(SUBJECT, EMAIL, CODE, REFRESH, (interval,), "rotated")
     grant = exchange(fake)
-    fake.fail_next(google.Operation.FREEBUSY, google.Outcome.QUOTA, times=2)
+    fake.fail_next(
+        google.Operation.FREEBUSY,
+        google.Outcome.QUOTA,
+        times=2,
+        status_class=google.StatusClass.CLIENT_ERROR,
+        retry_after=32,
+    )
     for _ in range(2):
         with pytest.raises(google.Failed) as quota:
             fake.freebusy(access_token=grant.access_token, start=START, end=END)
-        assert quota.value.category == google.Outcome.QUOTA
-    assert fake.freebusy(access_token=grant.access_token, start=START, end=END).busy == (interval,)
+        assert (quota.value.category, quota.value.status_class, quota.value.retry_after) == (
+            google.Outcome.QUOTA,
+            google.StatusClass.CLIENT_ERROR,
+            32,
+        )
+    offset = timezone(timedelta(hours=2))
+    snapshot = fake.freebusy(
+        access_token=grant.access_token,
+        start=START.astimezone(offset),
+        end=END.astimezone(offset),
+    )
+    assert snapshot.busy == (interval,)
+    assert (snapshot.start, snapshot.end) == (START, END)
+    assert snapshot.start.tzinfo is snapshot.end.tzinfo is UTC
     assert fake.refresh(refresh_token=REFRESH).refresh_token == "rotated"
     second = fake.refresh(refresh_token="rotated")
     assert second.refresh_token is None
@@ -645,3 +702,130 @@ def test_refresh_checks_scopes_if_returned(gateway: google.Gateway, http: Http) 
     with pytest.raises(google.Failed) as failure:
         gateway.refresh(refresh_token=REFRESH)
     assert failure.value.category == google.Outcome.INVALID_SCOPE
+
+
+@pytest.mark.parametrize("use_fake", [False, True], ids=["gateway", "fake"])
+@pytest.mark.parametrize(
+    ("code", "verifier", "nonce"),
+    [("", VERIFIER, NONCE), (CODE, "too-short", NONCE), (CODE, VERIFIER, "")],
+)
+def test_exchange_rejects_invalid_request(
+    gateway: google.Gateway,
+    http: Http,
+    code: str,
+    verifier: str,
+    nonce: str,
+    use_fake: bool,
+) -> None:
+    calendar = FakeGateway(transaction_open=lambda: False) if use_fake else gateway
+    with pytest.raises(google.Failed) as failure:
+        calendar.exchange_code(code=code, verifier=verifier, nonce=nonce)
+    assert failure.value.category == google.Outcome.INVALID_REQUEST
+    assert not http.requests
+
+
+@pytest.mark.parametrize(
+    ("claim", "offset", "accept"),
+    [("iat", 5, True), ("iat", 120, False), ("exp", -120, False)],
+)
+def test_id_token_clock_leeway(
+    gateway: google.Gateway,
+    http: Http,
+    signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey],
+    claim: str,
+    offset: int,
+    accept: bool,
+) -> None:
+    key, _ = signing_keys
+    now = int(datetime.now(UTC).timestamp())
+    http.add(google.TOKEN_URL, exchange_body(signed(key, {**claims(), claim: now + offset})))
+    jwks(http, key)
+    if accept:
+        assert exchange(gateway).subject == SUBJECT
+    else:
+        with pytest.raises(google.Failed) as failure:
+            exchange(gateway)
+        assert failure.value.category == google.Outcome.INVALID_IDENTITY
+
+
+def test_unknown_kid_still_missing_after_refetch(
+    gateway: google.Gateway,
+    http: Http,
+    signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey],
+) -> None:
+    key, rotated = signing_keys
+    http.add(google.TOKEN_URL, exchange_body(signed(key, claims())))
+    jwks(http, key)
+    assert exchange(gateway).subject == SUBJECT
+    http.add(google.TOKEN_URL, exchange_body(signed(rotated, claims(), "key-2")))
+    jwks(http, key)
+    with pytest.raises(google.Failed) as failure:
+        exchange(gateway)
+    assert failure.value.category == google.Outcome.INVALID_IDENTITY
+    assert [request.url for request in http.requests] == [google.TOKEN_URL, google.JWKS_URL] * 2
+
+
+@pytest.mark.parametrize(("use", "alg"), [("enc", "RS256"), ("sig", "RS384")])
+def test_jwks_requires_a_signing_key_for_rs256(
+    gateway: google.Gateway,
+    http: Http,
+    signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey],
+    use: str,
+    alg: str,
+) -> None:
+    key, _ = signing_keys
+    http.add(google.TOKEN_URL, exchange_body(signed(key, claims())))
+    jwks(http, key, use=use, alg=alg)
+    with pytest.raises(google.Failed) as failure:
+        exchange(gateway)
+    assert failure.value.category == google.Outcome.INVALID_IDENTITY
+
+
+@pytest.mark.parametrize(
+    ("status", "category", "status_class"),
+    [
+        (302, google.Outcome.REDIRECT, google.StatusClass.REDIRECTION),
+        (403, google.Outcome.TRANSIENT, google.StatusClass.CLIENT_ERROR),
+        (503, google.Outcome.TRANSIENT, google.StatusClass.SERVER_ERROR),
+    ],
+)
+def test_jwks_fetch_failure_is_distinct_from_token_failure(
+    gateway: google.Gateway,
+    http: Http,
+    signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey],
+    status: int,
+    category: google.Outcome,
+    status_class: google.StatusClass,
+) -> None:
+    key, _ = signing_keys
+    http.add(google.TOKEN_URL, exchange_body(signed(key, claims())))
+    http.add(google.JWKS_URL, status=status, headers={"Location": "https://other.test/certs"})
+    with pytest.raises(google.Failed) as failure:
+        exchange(gateway)
+    assert (failure.value.category, failure.value.status_class) == (category, status_class)
+    assert [request.url for request in http.requests] == [google.TOKEN_URL, google.JWKS_URL]
+
+
+@pytest.mark.parametrize("url", [google.FREEBUSY_URL, google.REVOKE_URL])
+def test_calendar_or_revoke_timeout(gateway: google.Gateway, http: Http, url: str) -> None:
+    http.responses.append((url, requests.Timeout(PROVIDER_DETAIL)))
+    with pytest.raises(google.Failed) as failure:
+        if url == google.REVOKE_URL:
+            gateway.revoke(refresh_token=REFRESH)
+        else:
+            freebusy(gateway)
+    assert (failure.value.category, failure.value.status_class) == (
+        google.Outcome.TIMEOUT,
+        google.StatusClass.NONE,
+    )
+
+
+def test_revoke_server_failure_can_be_retried(gateway: google.Gateway, http: Http) -> None:
+    http.add(google.REVOKE_URL, status=503, headers={"Retry-After": "30"})
+    with pytest.raises(google.Failed) as failure:
+        gateway.revoke(refresh_token=REFRESH)
+    assert (failure.value.category, failure.value.status_class, failure.value.retry_after) == (
+        google.Outcome.TRANSIENT,
+        google.StatusClass.SERVER_ERROR,
+        30,
+    )

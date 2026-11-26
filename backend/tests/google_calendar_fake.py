@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.google_calendar_gateway import (
     ISSUERS,
+    MAX_RETRY_AFTER,
     Authorization,
     Exchanged,
     Failed,
@@ -17,6 +18,9 @@ from app.google_calendar_gateway import (
     Outcome,
     Refreshed,
     RevokeResult,
+    StatusClass,
+    _utc_bounds,
+    _validate_exchange,
 )
 
 
@@ -35,6 +39,12 @@ type Response = Authorization | Exchanged | Refreshed | FreeBusy | RevokeResult
 
 
 class FakeGateway(Gateway):
+    """Use a real open-transaction counter for transaction_open in integration fixtures.
+
+    Wire it like Stripe's open_sessions counter so each external operation can detect
+    a transaction held open by its caller.
+    """
+
     def __init__(
         self,
         *,
@@ -49,24 +59,31 @@ class FakeGateway(Gateway):
         self.responses: dict[Operation, deque[Response | Failed | Callable[[], Response]]] = (
             defaultdict(deque)
         )
-        self.failures: dict[Operation, tuple[int, Outcome]] = {}
+        self.failures: dict[Operation, tuple[int, Outcome, StatusClass, int | None]] = {}
         self._access: dict[str, tuple[Account, datetime]] = {}
 
     def fail_next(
-        self, op: Operation, category: Outcome = Outcome.TRANSIENT, times: int = 1
+        self,
+        op: Operation,
+        category: Outcome = Outcome.TRANSIENT,
+        times: int = 1,
+        *,
+        status_class: StatusClass = StatusClass.NONE,
+        retry_after: int | None = None,
     ) -> None:
         assert times > 0
-        self.failures[op] = (times, category)
+        assert retry_after is None or 0 <= retry_after <= MAX_RETRY_AFTER
+        self.failures[op] = (times, category, status_class, retry_after)
 
     def _enter[T: Response](self, op: Operation, expected: type[T]) -> T | None:
         if op != Operation.AUTHORIZE:
             assert not self.transaction_open(), "Google Calendar call inside a database transaction"
         self.calls.append(op)
         if op in self.failures:
-            times, category = self.failures.pop(op)
+            times, category, status_class, retry_after = self.failures.pop(op)
             if times > 1:
-                self.failures[op] = (times - 1, category)
-            raise Failed(category) from None
+                self.failures[op] = (times - 1, category, status_class, retry_after)
+            raise Failed(category, status_class, retry_after) from None
         if not self.responses[op]:
             return None
         scripted = self.responses[op].popleft()
@@ -86,6 +103,7 @@ class FakeGateway(Gateway):
         return scripted or Authorization("https://google-calendar.test/authorize")
 
     def exchange_code(self, *, code: str, verifier: str, nonce: str) -> Exchanged:
+        _validate_exchange(code, verifier, nonce)
         scripted = self._enter(Operation.EXCHANGE, Exchanged)
         if scripted is not None:
             return scripted
@@ -125,14 +143,15 @@ class FakeGateway(Gateway):
         return Refreshed(self._issue(account), 3600, replacement)
 
     def freebusy(self, *, access_token: str, start: datetime, end: datetime) -> FreeBusy:
+        lower, upper = _utc_bounds(start, end)
         scripted = self._enter(Operation.FREEBUSY, FreeBusy)
         if scripted is not None:
             return scripted
         grant = self._access.get(access_token)
         if grant is None or grant[0].revoked or grant[1] <= self.now:
             raise Failed(Outcome.REFRESH_REQUIRED) from None
-        busy = tuple(item for item in grant[0].busy if item.start < end and start < item.end)
-        return FreeBusy(start, end, busy)
+        busy = tuple(item for item in grant[0].busy if item.start < upper and lower < item.end)
+        return FreeBusy(lower, upper, busy)
 
     def revoke(self, *, refresh_token: str) -> RevokeResult:
         scripted = self._enter(Operation.REVOKE, RevokeResult)
