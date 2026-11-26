@@ -205,9 +205,7 @@ jobs:
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
         if: matrix.group != 0
-        run: >-
-          uv run pytest -n 4 --dist worksteal --splits 8 --group ${{ matrix.group }}
-          --splitting-algorithm least_duration --durations=20
+        run: uv run pytest -n 4 --splits 8 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:
