@@ -123,7 +123,7 @@ jobs:
   # backend/.test_durations (pytest-split). A test missing from that file counts as the average, so a stale file only
   # unbalances the shards, never skips a test. Refresh with `uv run pytest -n 4 --store-durations --clean-durations`.
   api:
-    name: Backend Tests (${{ matrix.group }}/8)
+    name: ${{ matrix.group == 0 && 'Backend Serial Safety' || format('Backend Tests ({0}/8)', matrix.group) }}
     needs: changes
     if: needs.changes.outputs.backend != 'false'
     runs-on: ubuntu-latest
@@ -132,6 +132,8 @@ jobs:
       fail-fast: false
       matrix:
         group: [1, 2, 3, 4, 5, 6, 7, 8]
+        include:
+          - group: 0
     defaults:
       run:
         working-directory: backend
@@ -197,13 +199,13 @@ jobs:
             END IF;
           END $$;
           SQL
-      # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
-      # without xdist. Once, in the first shard.
+      # Exercise the serial path (ZIF-111) once in its own matrix job.
       - name: Run backend tests (serial path)
-        if: matrix.group == 1
+        if: matrix.group == 0
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
-        run: uv run pytest -n auto --splits 8 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
+        if: matrix.group != 0
+        run: uv run pytest -n 4 --splits 8 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:

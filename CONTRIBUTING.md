@@ -21,7 +21,7 @@
 ## Backend tests
 
 Run the full suite with `cd backend && uv run pytest -n 4`. Each worker creates its own database;
-use a separate base database name for each checkout. The serial safety check also runs in CI with
+use a separate base database name for each checkout. The serial safety check runs once in its own CI job with
 `uv run pytest -q tests/test_parallel_safety.py`.
 
 After adding tests or changing fixture costs, refresh the shard weights with
