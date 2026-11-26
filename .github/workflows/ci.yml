@@ -119,11 +119,11 @@ jobs:
       - name: Type-check backend
         run: uv run mypy app tests migrations scripts
 
-  # ZIF-295: the suite runs in 4 shards, each on its own runner and Postgres, balanced by the recorded test times in
+  # ZIF-295: the suite runs in 8 shards, each on its own runner and Postgres, balanced by the recorded test times in
   # backend/.test_durations (pytest-split). A test missing from that file counts as the average, so a stale file only
-  # unbalances the shards, never skips a test. Refresh it now and then: `uv run pytest -n 4 --store-durations`.
+  # unbalances the shards, never skips a test. Refresh with `uv run pytest -n 4 --store-durations --clean-durations`.
   api:
-    name: Backend Tests (${{ matrix.group }}/4)
+    name: ${{ matrix.group == 0 && 'Backend Serial Safety' || format('Backend Tests ({0}/8)', matrix.group) }}
     needs: changes
     if: needs.changes.outputs.backend != 'false'
     runs-on: ubuntu-latest
@@ -131,7 +131,9 @@ jobs:
       # One failing shard still lets the others finish, so a run shows every failure at once.
       fail-fast: false
       matrix:
-        group: [1, 2, 3, 4]
+        group: [1, 2, 3, 4, 5, 6, 7, 8]
+        include:
+          - group: 0
     defaults:
       run:
         working-directory: backend
@@ -175,18 +177,35 @@ jobs:
       # ZIF-284: a vacuum of a table whose grants a migration just changed deadlocks the migration's
       # next ALTER on it, and failed round-trip tests twice on release commits. This Postgres is
       # thrown away after the job, so turning autovacuum off costs nothing here.
-      - name: Turn autovacuum off
-        run: >-
-          docker exec ${{ job.services.postgres.id }}
-          psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook
-          -c "ALTER SYSTEM SET autovacuum = off" -c "SELECT pg_reload_conf()"
-      # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
-      # without xdist. Once, in the first shard.
+      # Only this disposable test service may discard writes on crash, so skip durability work.
+      - name: Configure disposable test database
+        run: |
+          docker exec ${{ job.services.postgres.id }} \
+            psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook \
+            -c "ALTER SYSTEM SET autovacuum = off" \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          docker exec -i ${{ job.services.postgres.id }} \
+            psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook <<'SQL'
+          DO $$
+          BEGIN
+            IF current_setting('autovacuum') <> 'off'
+              OR current_setting('fsync') <> 'off'
+              OR current_setting('synchronous_commit') <> 'off'
+              OR current_setting('full_page_writes') <> 'off' THEN
+              RAISE EXCEPTION 'disposable test database settings did not reload';
+            END IF;
+          END $$;
+          SQL
+      # Exercise the serial path (ZIF-111) once in its own matrix job.
       - name: Run backend tests (serial path)
-        if: matrix.group == 1
+        if: matrix.group == 0
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
-        run: uv run pytest -n auto --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration
+        if: matrix.group != 0
+        run: uv run pytest -n 4 --splits 8 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:

@@ -657,6 +657,10 @@ INSERT INTO plans (slug, name, values) VALUES (:slug, '{"en": "T", "nl": "T", "p
 ON CONFLICT (slug) DO UPDATE SET values = excluded.values, archived_at = NULL
 RETURNING id
 """)
+SET_DEFAULT_PLAN = text(f"""
+WITH plan AS ({PLAN.text})
+UPDATE platform_billing SET default_plan_id = plan.id FROM plan
+""")
 # No pool: an idle connection kept open would block a CREATE DATABASE ... TEMPLATE of this one.
 BILLING = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
 
@@ -669,8 +673,7 @@ def _all_features_default(request: pytest.FixtureRequest) -> None:
         return
     request.getfixturevalue("migrated")
     with BILLING.begin() as conn:
-        plan = conn.scalar(PLAN, {"slug": "all-features", "values": json.dumps(ALL_FEATURES)})
-        conn.execute(text("UPDATE platform_billing SET default_plan_id = :p"), {"p": plan})
+        conn.execute(SET_DEFAULT_PLAN, {"slug": "all-features", "values": json.dumps(ALL_FEATURES)})
 
 
 @pytest.fixture
@@ -1112,19 +1115,38 @@ def end_membership(tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
 def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
     # As the migrate role: the app role creates neither businesses nor users (ZB-10).
     with migrate_engine.begin() as conn:
-        a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
-        b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
-    people = People(
-        a=a,
-        b=b,
-        only_a=add_user(migrate_engine),
-        only_b=add_user(migrate_engine),
-        both=add_user(migrate_engine, locale="nl"),
-    )
-    add_membership(a, people.only_a)
-    add_membership(b, people.only_b)
-    add_membership(a, people.both, "owner")
-    add_membership(b, people.both)
+        tenants = {
+            name: tenant_id
+            for name, tenant_id in conn.execute(
+                text("INSERT INTO tenants (name) VALUES ('a'), ('b') RETURNING name, id")
+            )
+        }
+        a, b = tenants["a"], tenants["b"]
+        people = People(a=a, b=b, only_a=uuid.uuid7(), only_b=uuid.uuid7(), both=uuid.uuid7())
+        # Seed together: thousands of tests need these rows, not eight separate connections.
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, locale, name) "
+                "VALUES (:id, :email, :locale, 'Test Person')"
+            ),
+            [
+                {"id": user, "email": email_of(user), "locale": locale}
+                for user, locale in (
+                    (people.only_a, None),
+                    (people.only_b, None),
+                    (people.both, "nl"),
+                )
+            ],
+        )
+        for tenant, members in (
+            (a, ((people.only_a, "worker"), (people.both, "owner"))),
+            (b, ((people.only_b, "worker"), (people.both, "worker"))),
+        ):
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant)})
+            conn.execute(
+                text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
+                [{"t": tenant, "u": user, "r": role} for user, role in members],
+            )
     yield people
     # First, and as the migrate role: bookings reference memberships (no ON DELETE), clients and
     # services, so they must go before any of the three. The app role has no DELETE on them.
