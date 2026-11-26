@@ -921,6 +921,9 @@
       "paymentsOnboarding": "O Stripe ainda precisa de alguns dados antes que você possa receber pagamentos.",
       "paymentsContinue": "Continuar configuração",
       "paymentsReady": "Seu negócio pode receber pagamentos online.",
+      "paymentsPlanNone": "Você ainda não conectou sua conta Stripe. Seu plano atual não permite receber pagamentos online.",
+      "paymentsPlanOnboarding": "A configuração do Stripe ainda está incompleta. Seu plano atual não permite receber pagamentos online.",
+      "paymentsPlanReady": "Sua conta Stripe está conectada. Seu plano atual não permite receber pagamentos online.",
       "paymentsDashboard": "Abrir painel do Stripe",
       "paymentsFailed": "O Stripe não respondeu. Tente novamente em instantes.",
       "paymentsFees": "Taxa do ziftbook no seu plano: {direct} dos pagamentos de agendamentos feitos diretamente com você, {marketplace} dos pagamentos de agendamentos vindos do marketplace.",
@@ -1215,8 +1218,8 @@
     },
     "planLimit": {
       "unavailable": "Os detalhes do plano estão indisponíveis. Recarregue a página para tentar novamente.",
-      "owner": "{feature} não faz parte do seu plano.",
-      "worker": "{feature} não faz parte do plano. Fale com o dono do negócio.",
+      "owner": "Seu plano não inclui {feature}.",
+      "worker": "O plano não inclui {feature}. Fale com o dono do negócio.",
       "link": "Escolher um plano"
     },
     "planBanner": {

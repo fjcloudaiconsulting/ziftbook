@@ -93,15 +93,20 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   }
 
   const action = account && owner ? paymentsAction(account.state, account.country_supported, account.currency_supported) : null;
-  const body = !account
-    ? null
-    : account.state === "off"
-      ? t("paymentsOff")
-      : !account.country_supported
-        ? t("paymentsCountry")
-        : account.state === "none" && !account.currency_supported
-          ? t("paymentsCurrency", { currency: currencyName(account.currency, locale) })
-          : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
+  let body: string | null = null;
+  if (account) {
+    if (account.state === "off") body = t("paymentsOff");
+    else if (!account.country_supported) body = t("paymentsCountry");
+    else if (account.state === "none" && !account.currency_supported) body = t("paymentsCurrency", { currency: currencyName(account.currency, locale) });
+    else if (entitlements != null) {
+      const status = {
+        none: available ? "paymentsNone" : "paymentsPlanNone",
+        onboarding: available ? "paymentsOnboarding" : "paymentsPlanOnboarding",
+        ready: available ? "paymentsReady" : "paymentsPlanReady",
+      } as const;
+      body = t(status[account.state]);
+    }
+  }
 
   return (
     <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={disabled}>
@@ -126,11 +131,13 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
             {t("paymentsFees", { direct: percentOf(account.platform_fee_direct, locale), marketplace: percentOf(account.platform_fee_marketplace, locale) })}
           </p>
           <p className={styles.body}>
-            {t("paymentsStripeFee")}{" "}
-            <a href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
-              {t("paymentsStripePricing")}
-              <span className={uiStyles.srOnly}> {t("opensInNewTab")}</span>
-            </a>
+            <span>
+              {t("paymentsStripeFee")}{" "}
+              <a className={uiStyles.textButton} href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
+                {t("paymentsStripePricing")}
+                <span className={uiStyles.srOnly}> {t("opensInNewTab")}</span>
+              </a>
+            </span>
           </p>
         </>
       )}

@@ -921,6 +921,9 @@
       "paymentsOnboarding": "Stripe still needs a few details before you can take payments.",
       "paymentsContinue": "Continue setup",
       "paymentsReady": "Your business can take online payments.",
+      "paymentsPlanNone": "You haven't connected Stripe yet. Your current plan doesn't allow online payments.",
+      "paymentsPlanOnboarding": "Stripe setup is incomplete. Your current plan doesn't allow online payments.",
+      "paymentsPlanReady": "Your Stripe account is connected. Your current plan doesn't allow online payments.",
       "paymentsDashboard": "Open Stripe dashboard",
       "paymentsFailed": "Stripe didn't answer. Try again in a moment.",
       "paymentsFees": "ziftbook's fee on your plan: {direct} of payments for bookings made directly with you, {marketplace} of payments for bookings from the marketplace.",
@@ -1215,8 +1218,8 @@
     },
     "planLimit": {
       "unavailable": "Plan details are unavailable. Reload the page to try again.",
-      "owner": "{feature} isn't part of your plan.",
-      "worker": "{feature} isn't part of your plan. Ask the business owner.",
+      "owner": "Your plan doesn't include {feature}.",
+      "worker": "Your plan doesn't include {feature}. Ask the business owner.",
       "link": "Choose a plan"
     },
     "planBanner": {
