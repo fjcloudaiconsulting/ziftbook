@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from app import auth, enforcement
+from app import auth, calendar_lifecycle, enforcement
 from app.accounts import DisplayNameText
 from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.errors import ApiError, Error
@@ -221,6 +221,7 @@ def remove(member_id: UUID, current: CurrentOwner, request: Request) -> None:
     member = target(current, member_id)
     if current.db.scalar(UPCOMING, {"id": member_id}):
         raise ApiError(409, "has_upcoming_bookings")
+    calendar_lifecycle.remove_member(current.db, current.tenant_id, member_id)
     # What deleting the row cascaded (0006, 0017, 0019, 0021, 0034). Sessions first: the role change
     # below fails on the sessions foreign key while one survives. sessions has no row-level
     # security, so tenant_id is mandatory.
