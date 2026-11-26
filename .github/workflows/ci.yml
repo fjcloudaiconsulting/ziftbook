@@ -203,18 +203,7 @@ jobs:
         if: matrix.group == 1
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
-        run: >-
-          uv run pytest -n auto --splits 4 --group ${{ matrix.group }}
-          --splitting-algorithm least_duration --durations=20
-          --store-durations --clean-durations
-      - name: Upload backend shard durations
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: zif301-test-durations-${{ matrix.group }}
-          path: backend/.test_durations
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
+        run: uv run pytest -n auto --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:
