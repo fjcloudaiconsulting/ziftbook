@@ -98,13 +98,14 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
     if (account.state === "off") body = t("paymentsOff");
     else if (!account.country_supported) body = t("paymentsCountry");
     else if (account.state === "none" && !account.currency_supported) body = t("paymentsCurrency", { currency: currencyName(account.currency, locale) });
-    else if (entitlements != null) {
-      const status = {
-        none: available ? "paymentsNone" : "paymentsPlanNone",
-        onboarding: available ? "paymentsOnboarding" : "paymentsPlanOnboarding",
-        ready: available ? "paymentsReady" : "paymentsPlanReady",
+    else if (!planLoading) {
+      const statusKey = {
+        none: available ? "paymentsNone" : "paymentsAccountNone",
+        onboarding: available ? "paymentsOnboarding" : "paymentsAccountOnboarding",
+        ready: available ? "paymentsReady" : "paymentsAccountReady",
       } as const;
-      body = t(status[account.state]);
+      const status = t(statusKey[account.state]);
+      body = available || entitlements === null ? status : t("paymentsPlanDisabled", { status });
     }
   }
 
@@ -133,7 +134,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
           <p className={styles.body}>
             <span>
               {t("paymentsStripeFee")}{" "}
-              <a className={uiStyles.textButton} href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
+              <a className={uiStyles.inlineLink} href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">
                 {t("paymentsStripePricing")}
                 <span className={uiStyles.srOnly}> {t("opensInNewTab")}</span>
               </a>

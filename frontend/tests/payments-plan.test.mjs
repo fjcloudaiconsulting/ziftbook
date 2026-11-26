@@ -3,23 +3,50 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { createTranslator } from "next-intl";
+import { createContext } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as jsx from "react/jsx-runtime";
 import ts from "typescript";
 
 import * as billing from "../lib/billing.ts";
+import { stickyHeight } from "../lib/console.ts";
 import * as currency from "../lib/currency.ts";
 import * as money from "../lib/money.ts";
 import * as settings from "../lib/settings.ts";
 
 const catalog = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"));
-const source = readFileSync(new URL("../app/[locale]/(console)/settings/payments.tsx", import.meta.url), "utf8");
-const { outputText } = ts.transpileModule(source, {
-  fileName: "payments.tsx",
-  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
-});
-const loadPayments = new Function("require", "exports", outputText);
 const messages = catalog("en");
+const uiStyles = { inlineLink: "inlineLink", textButton: "textButton", srOnly: "srOnly" };
+const htmlText = (text) => text.replaceAll("'", "&#x27;");
+const plan = (enabled) => ({ values: { online_payments: enabled } });
+
+function compile(path) {
+  const source = readFileSync(new URL(`../app/[locale]/${path}`, import.meta.url), "utf8");
+  const { outputText } = ts.transpileModule(source, {
+    fileName: path,
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
+  });
+  return new Function("require", "exports", outputText);
+}
+
+const loadPayments = compile("(console)/settings/payments.tsx");
+const loadConsole = compile("_ui/console.tsx");
+
+function featureNote(entitlements, role, locale, messages) {
+  const modules = {
+    "react/jsx-runtime": jsx,
+    react: { createContext, useContext: () => ({ session: { role }, entitlements }) },
+    "next-intl": { useTranslations: (namespace) => createTranslator({ locale, messages, namespace }) },
+    "@/i18n/navigation": { Link: (props) => jsx.jsx("a", props) },
+    "@/lib/billing": billing,
+    "@/lib/console": { stickyHeight },
+    "./parts": { Banner: ({ children }) => jsx.jsx("div", { role: "status", children }) },
+    "./ui.module.css": uiStyles,
+  };
+  const exports = {};
+  loadConsole((name) => modules[name] ?? {}, exports);
+  return exports.FeatureNote;
+}
 
 function renderPayments(state, entitlements, overrides = {}) {
   const account = {
@@ -42,11 +69,11 @@ function renderPayments(state, entitlements, overrides = {}) {
     "@/lib/currency": currency,
     "@/lib/money": money,
     "@/lib/settings": settings,
-    "../../_ui/console": { useConsole: () => ({ session: { role: "owner" }, entitlements }), FeatureNote: () => null },
+    "../../_ui/console": { useConsole: () => ({ session: { role: "owner" }, entitlements }), FeatureNote: featureNote(entitlements, "owner", "en", messages) },
     "../../_ui/console.module.css": { body: "body" },
     "../../_ui/parts": {},
     "../../_ui/stripe-dashboard": {},
-    "../../_ui/ui.module.css": { textButton: "textButton", srOnly: "srOnly" },
+    "../../_ui/ui.module.css": uiStyles,
   };
   const exports = {};
   loadPayments((name) => modules[name], exports);
@@ -55,18 +82,22 @@ function renderPayments(state, entitlements, overrides = {}) {
 
 describe("plan-limit copy", () => {
   const expected = {
-    en: ["Your plan doesn't include online payments.", "Your plan doesn't include a custom domain.", "Ask the business owner."],
-    nl: ["Je abonnement omvat online betalingen niet.", "Je abonnement omvat een eigen domein niet.", "Vraag het aan de eigenaar van het bedrijf."],
-    pt: ["Seu plano não inclui pagamentos online.", "Seu plano não inclui um domínio próprio.", "Fale com o dono do negócio."],
+    en: ["Your plan doesn't include {feature}.", "The business's plan doesn't include {feature}. Ask the business owner."],
+    nl: ["Dit zit niet in je abonnement: {feature}.", "Dit zit niet in het abonnement van het bedrijf: {feature}. Vraag het aan de eigenaar van het bedrijf."],
+    pt: ["Seu plano não inclui {feature}.", "O plano do negócio não inclui {feature}. Fale com o dono do negócio."],
   };
-  for (const [locale, [online, domain, ownerPrompt]] of Object.entries(expected)) {
-    test(`${locale} starts the sentence before the feature, including labels with articles`, () => {
+  for (const [locale, [owner, worker]] of Object.entries(expected)) {
+    test(`${locale} renders the owner and worker plan-limit sentences and the owner upgrade link`, () => {
       const messages = catalog(locale);
       const t = createTranslator({ locale, messages, namespace: "Console.planLimit" });
-      for (const [key, sentence] of [["online_payments", online], ["custom_domain", domain]]) {
+      const entitlements = plan(false);
+      const OwnerNote = featureNote(entitlements, "owner", locale, messages);
+      const WorkerNote = featureNote(entitlements, "worker", locale, messages);
+      for (const key of ["online_payments", "custom_domain"]) {
         const feature = messages.Console.features[key];
-        assert.equal(t("owner", { feature }), sentence);
-        assert.equal(t("worker", { feature }), `${locale === "pt" ? sentence.replace("Seu plano", "O plano") : sentence} ${ownerPrompt}`);
+        const upgrade = `<a class="inlineLink" href="/settings?tab=plan">${htmlText(t("link"))}</a>`;
+        assert.equal(renderToStaticMarkup(jsx.jsx(OwnerNote, { feature: key })), `<div role="status">${htmlText(owner.replace("{feature}", feature))} ${upgrade}</div>`);
+        assert.equal(renderToStaticMarkup(jsx.jsx(WorkerNote, { feature: key })), `<div role="status">${htmlText(worker.replace("{feature}", feature))}</div>`);
       }
       for (const feature of Object.values(messages.Console.features)) {
         assert.match(t("owner", { feature }), /^\p{Lu}.*\.$/u, feature);
@@ -76,20 +107,24 @@ describe("plan-limit copy", () => {
   }
 });
 
-const plan = (enabled) => ({ values: { online_payments: enabled } });
 const accountStatuses = {
-  none: ["paymentsNone", "paymentsPlanNone"],
-  onboarding: ["paymentsOnboarding", "paymentsPlanOnboarding"],
-  ready: ["paymentsReady", "paymentsPlanReady"],
+  none: ["paymentsNone", "You haven't connected Stripe yet."],
+  onboarding: ["paymentsOnboarding", "Stripe setup is incomplete."],
+  ready: ["paymentsReady", "Your Stripe account is connected."],
 };
-const statusText = (key) => messages.Console.settings[key].replaceAll("'", "&#x27;");
+const statusText = (key) => htmlText(messages.Console.settings[key]);
+const withoutPayments = "Online payments stay off until your plan includes them.";
+const unavailableNote = messages.Console.planLimit.unavailable;
 
-for (const [state, [included, excluded]] of Object.entries(accountStatuses)) {
+for (const [state, [includedKey, accountOnly]] of Object.entries(accountStatuses)) {
   test(`${state} account status follows the plan, including unresolved and unavailable reads`, () => {
-    for (const [entitlements, expected] of [[plan(true), included], [plan(false), excluded], [undefined], [null]]) {
+    const included = messages.Console.settings[includedKey];
+    const excluded = `${accountOnly} ${withoutPayments}`;
+    for (const [entitlements, expected] of [[plan(true), included], [plan(false), excluded], [undefined], [null, accountOnly]]) {
       const rendered = renderPayments(state, entitlements);
-      const shown = Object.values(accountStatuses).flat().filter((key) => rendered.includes(statusText(key)));
+      const shown = [included, excluded, accountOnly].filter((status) => rendered.includes(`<p class="body">${htmlText(status)}</p>`));
       assert.deepEqual(shown, expected ? [expected] : []);
+      assert.equal(rendered.includes(`<div role="status">${htmlText(unavailableNote)}</div>`), entitlements === null);
     }
   });
 }
@@ -102,5 +137,5 @@ test("provider and country restrictions still explain why payments are off", () 
 
 test("Stripe pricing has the console text-link class inside the fee sentence", () => {
   const rendered = renderPayments("ready", plan(false));
-  assert.match(rendered, /<p class="body"><span>Stripe charges its processing fee to your own Stripe account\. <a class="textButton" href="https:\/\/stripe\.com\/nl\/pricing" target="_blank" rel="noopener noreferrer">Stripe&#x27;s pricing/);
+  assert.match(rendered, /<p class="body"><span>Stripe charges its processing fee to your own Stripe account\. <a class="inlineLink" href="https:\/\/stripe\.com\/nl\/pricing" target="_blank" rel="noopener noreferrer">Stripe&#x27;s pricing/);
 });

@@ -921,9 +921,10 @@
       "paymentsOnboarding": "Stripe heeft nog een paar gegevens nodig voordat je betalingen kunt ontvangen.",
       "paymentsContinue": "Verder met instellen",
       "paymentsReady": "Je bedrijf kan online betalingen ontvangen.",
-      "paymentsPlanNone": "Je hebt Stripe nog niet gekoppeld. Met je huidige abonnement kun je geen online betalingen ontvangen.",
-      "paymentsPlanOnboarding": "De Stripe-configuratie is nog niet afgerond. Met je huidige abonnement kun je geen online betalingen ontvangen.",
-      "paymentsPlanReady": "Je Stripe-account is gekoppeld. Met je huidige abonnement kun je geen online betalingen ontvangen.",
+      "paymentsAccountNone": "Je hebt Stripe nog niet gekoppeld.",
+      "paymentsAccountOnboarding": "De Stripe-configuratie is nog niet afgerond.",
+      "paymentsAccountReady": "Je Stripe-account is gekoppeld.",
+      "paymentsPlanDisabled": "{status} Online betalingen blijven uit totdat je abonnement ze ondersteunt.",
       "paymentsDashboard": "Stripe-dashboard openen",
       "paymentsFailed": "Stripe reageerde niet. Probeer het zo nog eens.",
       "paymentsFees": "De vergoeding van ziftbook in je abonnement: {direct} van betalingen voor boekingen die rechtstreeks bij je worden gemaakt, {marketplace} van betalingen voor boekingen via de marktplaats.",
@@ -1213,13 +1214,13 @@
       "marketplace_listing": "de vermelding op de marktplaats",
       "custom_domain": "een eigen domein",
       "ai_assistant": "de AI-assistent",
-      "hide_branding": "het verbergen van de ziftbook-branding",
+      "hide_branding": "de ziftbook-branding verbergen",
       "other": "deze functie"
     },
     "planLimit": {
       "unavailable": "De plangegevens zijn niet beschikbaar. Laad de pagina opnieuw om het nog eens te proberen.",
-      "owner": "Je abonnement omvat {feature} niet.",
-      "worker": "Je abonnement omvat {feature} niet. Vraag het aan de eigenaar van het bedrijf.",
+      "owner": "Dit zit niet in je abonnement: {feature}.",
+      "worker": "Dit zit niet in het abonnement van het bedrijf: {feature}. Vraag het aan de eigenaar van het bedrijf.",
       "link": "Kies een abonnement"
     },
     "planBanner": {
