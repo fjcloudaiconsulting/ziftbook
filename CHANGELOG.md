@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.45.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.44.0...v0.45.0) (2026-11-24)
+
+
+### Features
+
+* **backend:** calendar connection storage and token encryption (ZIF-65) ([#475](https://github.com/fjcloudaiconsulting/ziftbook/issues/475)) ([5d05f71](https://github.com/fjcloudaiconsulting/ziftbook/commit/5d05f71bbf4c875e12d0da2cdc365a5ddbf3485c))
+
+
+### Bug Fixes
+
+* **ci:** run both suites for files the other tree's tests read (ZIF-302) ([#473](https://github.com/fjcloudaiconsulting/ziftbook/issues/473)) ([737372a](https://github.com/fjcloudaiconsulting/ziftbook/commit/737372a3a558ede44b7550b5f082bf6f0c4917f9))
+
 ## [0.44.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.4...v0.44.0) (2026-11-23)
 
 
