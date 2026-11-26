@@ -1,8 +1,9 @@
 """Local calendar transitions against the real app role, with synthetic credentials only."""
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Event
+from time import monotonic
 
 import pytest
 from pydantic import SecretStr
@@ -82,17 +83,84 @@ def test_disconnect_fences_active_states_and_clears_only_its_google_blocks(
             ("google", other),
         }
 
+
+@pytest.mark.parametrize("writer_first", [False, True], ids=["disconnect-first", "writer-first"])
+def test_disconnect_and_fenced_writer_under_both_commit_orders(
+    calendar_people: People, writer_first: bool
+) -> None:
+    people = calendar_people
+    worker = member_id(people.a, people.only_a)
     with tenant_context(people.a) as db:
-        assert (
-            db.execute(
+        connection = insert_connection(db, people.a, worker, people.only_a)
+
+    fence_read: Future[int] = Future()
+    begin_write = Event()
+
+    def write() -> bool:
+        with tenant_context(people.a) as db:
+            generation, lease_sequence = db.execute(
                 text("""
-            UPDATE google_calendar_connections SET last_success_at = now()
-            WHERE id = :id AND generation = 3 AND lease_sequence = 4 RETURNING id
-            """),
+                SELECT generation, lease_sequence FROM google_calendar_connections WHERE id = :id
+                """),
                 {"id": connection},
-            ).all()
-            == []
-        )
+            ).one()
+            fence_read.set_result(db.execute(text("SELECT pg_backend_pid()")).scalar_one())
+            assert begin_write.wait(10), "writer never received the update signal"
+            return (
+                db.execute(
+                    text("""
+                    UPDATE google_calendar_connections
+                    SET state = 'fresh', last_success_at = now(),
+                        coverage_start = now(), coverage_end = now() + interval '1 day'
+                    WHERE id = :id AND generation = :generation AND lease_sequence = :lease
+                    RETURNING id
+                    """),
+                    {"id": connection, "generation": generation, "lease": lease_sequence},
+                ).scalar_one_or_none()
+                == connection
+            )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        written = executor.submit(write)
+        writer_pid = fence_read.result(timeout=10)
+        if writer_first:
+            begin_write.set()
+            assert written.result(timeout=10)
+        with tenant_context(people.a) as db:
+            if writer_first:
+                assert (
+                    db.execute(
+                        text("SELECT state FROM google_calendar_connections WHERE id = :id"),
+                        {"id": connection},
+                    ).scalar_one()
+                    == "fresh"
+                )
+            assert (
+                calendar_lifecycle.disconnect(
+                    SignedIn(people.only_a, people.a, "worker", db), worker
+                ).state
+                == "revocation_pending"
+            )
+            if not writer_first:
+                begin_write.set()
+                # Observe PostgreSQL's row-lock wait while disconnect still holds the transaction.
+                blocked = text("SELECT pg_backend_pid() = ANY(pg_blocking_pids(:writer_pid))")
+                deadline = monotonic() + 10
+                while not db.scalar(blocked, {"writer_pid": writer_pid}):
+                    assert monotonic() < deadline, "writer never blocked on disconnect"
+        if not writer_first:
+            assert not written.result(timeout=10)
+
+    with tenant_context(people.a) as db:
+        row = db.execute(
+            text("""
+            SELECT state, generation, lease_sequence,
+                   (coverage_start, coverage_end, last_success_at) IS NULL AS cleared
+            FROM google_calendar_connections WHERE id = :id
+            """),
+            {"id": connection},
+        ).one()
+        assert tuple(row) == ("revocation_pending", 2, 1, True)
 
 
 @pytest.mark.parametrize("revoked", [False, True])

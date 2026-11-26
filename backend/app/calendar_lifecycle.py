@@ -78,7 +78,7 @@ def _disable(db: Session, tenant_id: UUID, member_id: UUID) -> DisconnectResult:
         return DisconnectResult("revocation_pending")
 
     # The envelope and its immutable encryption generation still bind the revocation credential.
-    # shortcut: no separate identity envelope yet, NULL it here in slice 3b (§14).
+    # shortcut: 3b NULLs the calendar-identity envelope here (§14)
     link = {**member, "connection": connection.id}
     db.execute(
         text("""
