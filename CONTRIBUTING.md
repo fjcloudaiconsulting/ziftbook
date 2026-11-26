@@ -28,7 +28,7 @@ After adding tests or changing fixture costs, refresh the shard weights with
 `uv run pytest -n 4 --store-durations --clean-durations` from `backend/` and commit `.test_durations`
 only after a green full run. The timings include setup, calls and teardown; worker startup and
 collection are outside them. `--clean-durations` removes entries for deleted tests. Keep the worker
-count and machine consistent when comparing timings, then check all four CI shards because local
+count and machine consistent when comparing timings, then check every CI shard because local
 timings do not predict their wall time exactly.
 
 ## Releases
