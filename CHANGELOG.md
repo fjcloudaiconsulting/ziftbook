@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.45.0...v0.46.0) (2026-11-26)
+
+
+### Features
+
+* **backend:** Google Calendar gateway (ZIF-65) ([#477](https://github.com/fjcloudaiconsulting/ziftbook/issues/477)) ([197ff28](https://github.com/fjcloudaiconsulting/ziftbook/commit/197ff28e1a0bda4e2492220b2ff0466f7b5947a2))
+
 ## [0.45.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.44.0...v0.45.0) (2026-11-24)
 
 
