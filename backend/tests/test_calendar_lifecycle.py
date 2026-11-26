@@ -160,16 +160,16 @@ def test_disconnect_retains_envelope_without_keys_and_keeps_private_values_out_o
 ) -> None:
     people = calendar_people
     worker = member_id(people.a, people.only_a)
-    values = {
-        "refresh_token": SecretStr("sentinel-calendar-refresh"),
-        "subject": SecretStr("sentinel-calendar-subject"),
-        "email": SecretStr("sentinel-calendar-label@example.test"),
-    }
+    values = {"refresh_token": SecretStr("sentinel-calendar-refresh")}
     keys = calendar_crypto.Keyring("test-key", {"test-key": b"k" * 32})
-    with tenant_context(people.a) as db:
+
+    def unexpected_crypto(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("disconnect must not inspect the keyring or decrypt an envelope")
+
+    with monkeypatch.context() as configured, tenant_context(people.a) as db:
         connection = insert_connection(db, people.a, worker, people.only_a)
         binding = calendar_crypto.Binding("calendar-token", people.a, connection, worker, 1)
-        monkeypatch.setattr(calendar_crypto, "keyring", lambda: keys)
+        configured.setattr(calendar_crypto, "keyring", lambda: keys)
         envelope = calendar_crypto.encrypt(values, binding)
         db.execute(
             text("""
@@ -186,11 +186,20 @@ def test_disconnect_retains_envelope_without_keys_and_keeps_private_values_out_o
                 "id": connection,
             },
         )
-    monkeypatch.setattr(calendar_crypto, "keyring", lambda: None)
-    with caplog.at_level("DEBUG"), tenant_context(people.a) as db:
+    with (
+        monkeypatch.context() as unconfigured,
+        caplog.at_level("DEBUG"),
+        tenant_context(people.a) as db,
+    ):
+        unconfigured.delenv("ZIF_GOOGLE_CALENDAR_KEKS", raising=False)
+        unconfigured.delenv("ZIF_GOOGLE_CALENDAR_ACTIVE_KEY_ID", raising=False)
+        assert calendar_crypto.keyring() is None
+        unconfigured.setattr(calendar_crypto, "GoogleCalendarKeySettings", unexpected_crypto)
+        unconfigured.setattr(calendar_crypto, "decrypt", unexpected_crypto)
         result = calendar_lifecycle.disconnect(
             SignedIn(people.only_a, people.a, "worker", db), worker
         )
+        assert result.state == "revocation_pending"
         row = db.execute(
             text("""
             SELECT key_id, wrapped_dek, wrap_nonce, payload_nonce, ciphertext
