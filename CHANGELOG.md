@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.46.1...v0.47.0) (2026-11-26)
+
+
+### Features
+
+* **backend:** calendar disconnect and member-removal transitions (ZIF-65) ([#480](https://github.com/fjcloudaiconsulting/ziftbook/issues/480)) ([ef66ab2](https://github.com/fjcloudaiconsulting/ziftbook/commit/ef66ab29218e36c50b8a3c552f65460c38f3a9c7))
+
 ## [0.46.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.46.0...v0.46.1) (2026-11-26)
 
 
