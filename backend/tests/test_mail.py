@@ -44,7 +44,7 @@ def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
             conn.execute(text("DELETE FROM email_outbox"))
 
 
-def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> uuid.UUID:
+def enqueue_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> str:
     job_key = f"email.send:{tenant_id}:hello:{recipient_id}:{uuid.uuid4()}"
     with SessionLocal.begin() as session:
         enqueue(
@@ -55,9 +55,14 @@ def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> uuid.UUID:
             {"recipient_id": str(recipient_id), "template": "hello", "to": "old@example.com"},
             tenant_id=tenant_id,
         )
+    return job_key
+
+
+def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> uuid.UUID:
+    job_key = enqueue_hello(tenant_id, recipient_id)
 
     async def run_until_idle() -> None:
-        while await run_once(KINDS):
+        while await run_once({"email.send": KINDS["email.send"]}):
             pass
 
     with jobs_as_the_worker():  # as the worker runs jobs (ZB-08)
@@ -127,17 +132,29 @@ def test_no_email_goes_to_someone_outside_the_tenant(people: People, clean_outbo
 # control: a live member of the same business is.
 def test_no_email_goes_to_a_removed_member(people: People, clean_outbox: None) -> None:
     end_membership(people.a, people.only_a)
-    calls = len(MAILGUN_CALLS)
+    removed, live = f"{people.only_a}@example.com", f"{people.both}@example.com"
+    recipients = {removed, live}
 
+    def delivery_attempts() -> list[str]:
+        return [call["To"] for call in MAILGUN_CALLS if call["To"] in recipients]
+
+    # An unrelated job of the same kind can be due on this worker.
+    enqueue_hello(people.b, people.only_b)
     send_hello(people.a, people.only_a)
-    assert len(MAILGUN_CALLS) == calls
+    assert delivery_attempts() == []
     assert subjects_sent_to(people.only_a) == []
+    assert subjects_sent_to(people.only_b) == ["Hello from ziftbook"]
     with tenant_context(people.a) as session:
         assert session.scalar(text("SELECT count(*) FROM email_outbox")) == 0
 
-    send_hello(people.a, people.both)
-    assert len(MAILGUN_CALLS) == calls + 1
+    job_id = send_hello(people.a, people.both)
+    assert delivery_attempts() == [live]
     assert len(subjects_sent_to(people.both)) == 1
+    with tenant_context(people.a) as session:
+        assert session.execute(text("SELECT job_id, status FROM email_outbox")).one() == (
+            job_id,
+            "sent",
+        )
 
 
 def test_a_recipient_with_no_language_gets_the_business_languages_mail(
