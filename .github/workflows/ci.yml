@@ -204,11 +204,6 @@ jobs:
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
         run: uv run pytest -n auto --splits 8 --group ${{ matrix.group }} --splitting-algorithm least_duration --durations=20
-      - name: Exercise backend aggregate failure
-        if: matrix.group == 8
-        run: |
-          echo 'Intentional ZIF-301 aggregate check probe' >&2
-          exit 1
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:
