@@ -132,6 +132,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
             {t("paymentsFees", { direct: percentOf(account.platform_fee_direct, locale), marketplace: percentOf(account.platform_fee_marketplace, locale) })}
           </p>
           <p className={styles.body}>
+            {/* shortcut: the duplicate .body rule makes this paragraph flex, remove the wrapper in ZIF-305. */}
             <span>
               {t("paymentsStripeFee")}{" "}
               <a className={uiStyles.inlineLink} href={stripePricingUrl(account.country)} target="_blank" rel="noopener noreferrer">

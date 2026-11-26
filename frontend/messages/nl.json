@@ -924,7 +924,7 @@
       "paymentsAccountNone": "Je hebt Stripe nog niet gekoppeld.",
       "paymentsAccountOnboarding": "De Stripe-configuratie is nog niet afgerond.",
       "paymentsAccountReady": "Je Stripe-account is gekoppeld.",
-      "paymentsPlanDisabled": "{status} Online betalingen blijven uit totdat je abonnement ze ondersteunt.",
+      "paymentsPlanDisabled": "{status} Online betalingen blijven uit totdat ze in je abonnement zitten.",
       "paymentsDashboard": "Stripe-dashboard openen",
       "paymentsFailed": "Stripe reageerde niet. Probeer het zo nog eens.",
       "paymentsFees": "De vergoeding van ziftbook in je abonnement: {direct} van betalingen voor boekingen die rechtstreeks bij je worden gemaakt, {marketplace} van betalingen voor boekingen via de marktplaats.",

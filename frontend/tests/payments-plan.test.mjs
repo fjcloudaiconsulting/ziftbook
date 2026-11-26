@@ -48,7 +48,8 @@ function featureNote(entitlements, role, locale, messages) {
   return exports.FeatureNote;
 }
 
-function renderPayments(state, entitlements, overrides = {}) {
+function renderPayments(state, entitlements, { locale = "en", ...overrides } = {}) {
+  const copy = catalog(locale);
   const account = {
     state, country_supported: true, currency_supported: true, country: "NL", currency: "EUR",
     min_amount_minor: 50, platform_fee_direct: 0, platform_fee_marketplace: 0, ...overrides,
@@ -63,13 +64,13 @@ function renderPayments(state, entitlements, overrides = {}) {
         return [typeof initial === "function" ? null : initial];
       },
     },
-    "next-intl": { useLocale: () => "en", useTranslations: (namespace) => createTranslator({ locale: "en", messages, namespace }) },
+    "next-intl": { useLocale: () => locale, useTranslations: (namespace) => createTranslator({ locale, messages: copy, namespace }) },
     "@/api-client": {},
     "@/lib/billing": billing,
     "@/lib/currency": currency,
     "@/lib/money": money,
     "@/lib/settings": settings,
-    "../../_ui/console": { useConsole: () => ({ session: { role: "owner" }, entitlements }), FeatureNote: featureNote(entitlements, "owner", "en", messages) },
+    "../../_ui/console": { useConsole: () => ({ session: { role: "owner" }, entitlements }), FeatureNote: featureNote(entitlements, "owner", locale, copy) },
     "../../_ui/console.module.css": { body: "body" },
     "../../_ui/parts": {},
     "../../_ui/stripe-dashboard": {},
@@ -133,6 +134,11 @@ test("provider and country restrictions still explain why payments are off", () 
   assert.ok(renderPayments("off", plan(false)).includes(statusText("paymentsOff")));
   assert.ok(renderPayments("ready", plan(true), { country_supported: false }).includes(statusText("paymentsCountry")));
   assert.match(renderPayments("none", plan(true), { currency_supported: false }), /Online payments aren&#x27;t available in Euro/);
+});
+
+test("the Dutch connected-account status says payments stay off until the plan includes them", () => {
+  const rendered = renderPayments("ready", plan(false), { locale: "nl" });
+  assert.ok(rendered.includes('<p class="body">Je Stripe-account is gekoppeld. Online betalingen blijven uit totdat ze in je abonnement zitten.</p>'));
 });
 
 test("Stripe pricing has the console text-link class inside the fee sentence", () => {
