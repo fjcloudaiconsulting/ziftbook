@@ -8,10 +8,11 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -28,7 +29,9 @@ from app import (
     clients,
     csp_reports,
     erasure_holds,
+    google_calendar_gateway,
     ledger,
+    logs,
     payments,
     photos,
     retention,
@@ -1033,3 +1036,51 @@ def test_a_failing_photo_decode_logs_ids_only(
     allowed = {"decoder", "upload_id", "cpu_ms", "signal", "exit_code", "peak_kb"}
     for line in decoder:
         assert set(line) - set(lines[0]) - {"msg"} <= allowed | {"ts", "level", "logger"}
+
+
+@pytest.mark.parametrize("kind", ("json", "text"))
+def test_google_calendar_logs_allow_only_outcome_fields(kind: Literal["json", "text"]) -> None:
+    sentinel = "private-google-calendar-zzyzx"
+    logger = logging.getLogger(google_calendar_gateway.__name__)
+    record = logger.makeRecord(
+        logger.name,
+        logging.INFO,
+        __file__,
+        0,
+        "unsafe message %s",
+        (sentinel,),
+        (ValueError, ValueError(sentinel), None),
+        extra={
+            "op": google_calendar_gateway.Operation.EXCHANGE,
+            "outcome": google_calendar_gateway.Outcome.INVALID_IDENTITY,
+            "status_class": google_calendar_gateway.StatusClass.SUCCESS,
+            "duration_ms": 12,
+            "body": sentinel,
+            "token": sentinel,
+            "query": sentinel,
+        },
+    )
+    record.context = {"user": sentinel}
+    line = logs.Formatter(kind).format(record)
+    assert sentinel not in line
+    if kind == "json":
+        payload = json.loads(line)
+        assert set(payload) == {
+            "ts",
+            "level",
+            "logger",
+            "msg",
+            "op",
+            "outcome",
+            "status_class",
+            "duration_ms",
+        }
+        assert payload["msg"] == "google calendar gateway"
+        assert payload["op"] == "exchange_code"
+        assert payload["outcome"] == "invalid_identity"
+        assert payload["status_class"] == "2xx"
+        assert payload["duration_ms"] == 12
+    else:
+        assert line.endswith(
+            "op=exchange_code outcome=invalid_identity status_class=2xx duration_ms=12"
+        )

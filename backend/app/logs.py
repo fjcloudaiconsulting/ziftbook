@@ -43,6 +43,8 @@ STANDARD = set(vars(logging.makeLogRecord({}))) | {
     "context",
 }
 RESERVED = {"ts", "level", "logger", "msg"}  # set by _head(); context/extras never overwrite them
+GOOGLE_CALENDAR_LOGGER = "app.google_calendar_gateway"
+GOOGLE_CALENDAR_FIELDS = ("op", "outcome", "status_class", "duration_ms")
 uncaught_logger = logging.getLogger("app.uncaught")
 
 
@@ -146,6 +148,12 @@ class Formatter(logging.Formatter):
         self.kind = kind
 
     def format(self, record: logging.LogRecord) -> str:
+        if record.name == GOOGLE_CALENDAR_LOGGER:
+            gateway_fields = self._head(record, "google calendar gateway")
+            gateway_fields.update(
+                (key, vars(record)[key]) for key in GOOGLE_CALENDAR_FIELDS if key in vars(record)
+            )
+            return self._render(gateway_fields)
         # A non-string message (logger.warning(error)) is logged as its class, never str().
         template = record.msg if isinstance(record.msg, str) else type(record.msg).__name__
         try:
@@ -288,6 +296,7 @@ def configure() -> None:
         "sqlalchemy.engine": sql,
         "psycopg": logging.WARNING,
         "httpx2": logging.WARNING,  # the test client; its INFO line has the URL and query
+        "urllib3": logging.WARNING,
         "stripe": logging.WARNING,  # its INFO line per request carries the API path and ids
         # Its WARNING quotes a malformed OTEL_EXPORTER_OTLP_HEADERS entry verbatim, token included.
         "opentelemetry.util.re": logging.ERROR,
