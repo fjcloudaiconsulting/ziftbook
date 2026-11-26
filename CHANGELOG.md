@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.46.0...v0.46.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **web:** Payments tab copy and link on a plan without online payments (ZIF-300) ([#478](https://github.com/fjcloudaiconsulting/ziftbook/issues/478)) ([d24e1df](https://github.com/fjcloudaiconsulting/ziftbook/commit/d24e1df1b9d93ed73dbdc3a6e0e5ea5526287ab6))
+
 ## [0.46.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.45.0...v0.46.0) (2026-11-26)
 
 
